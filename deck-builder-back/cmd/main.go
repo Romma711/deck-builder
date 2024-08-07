@@ -5,7 +5,7 @@ import (
 	"deck-builder-back/pkg/config"
 	"deck-builder-back/pkg/controller"
 	"deck-builder-back/pkg/model"
-	"deck-builder-back/pkg/routes"
+	"fmt"
 	"log"
 
 	"github.com/go-sql-driver/mysql"
@@ -13,8 +13,15 @@ import (
 )
 
 func main(){
-	cfg:=config.LoadConfig()
+	env:=config.LoadConfig()
 	
+	cfg := mysql.Config{
+		User: env.DBUser,
+		Passwd: env.DBPassword,
+		Addr: fmt.Sprintf("%s:%s",env.DBHost,env.Port),
+		DBName: env.DBName,
+	}
+
 	db, err := NewMySQLStorage(cfg)
 	if err != nil{
 		log.Fatal()
