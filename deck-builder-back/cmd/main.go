@@ -20,6 +20,7 @@ func main(){
 		Passwd: env.DBPassword,
 		Addr: fmt.Sprintf("%s:%s",env.DBHost,env.Port),
 		DBName: env.DBName,
+		AllowNativePasswords: true,
 	}
 
 	db, err := NewMySQLStorage(cfg)
