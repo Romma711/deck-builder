@@ -1,7 +1,7 @@
 package controller
 
 import (
-	"deck-builder-back/pkg/controller/middlewere"
+	middleware "deck-builder-back/pkg/controller/middlewere"
 	"deck-builder-back/pkg/types"
 	"encoding/json"
 	"net/http"
@@ -19,66 +19,80 @@ func NewHandler(store types.UserStore) *Handler {
 }
 
 func (h *Handler) HandleLogin(w http.ResponseWriter, r *http.Request) {
-	vars := mux.Vars(r)
-	res, _ := h.store.GetUserByEmail(vars["email"])
+	var user types.ToLogin
+	json.NewDecoder(r.Body).Decode(&user)
+	res,_ := h.store.GetUserByEmail(user.Email)
 	if res == nil {
+		w.Header().Add("Content-Type", "application/json")
 		w.WriteHeader(http.StatusUnauthorized)
-		json.NewEncoder(w).Encode("Email o Password son invalidos")
+		json.NewEncoder(w).Encode("Email o Password son invalidos1")
 		return
 	}
-	if !middleware.ComparePasswords(res.Password, []byte(vars["email"])) {
+	if !middleware.ComparePasswords(res.Password, []byte(user.Password)) {
+		w.Header().Add("Content-Type", "application/json")
 		w.WriteHeader(http.StatusUnauthorized)
-		json.NewEncoder(w).Encode("Email o Password son invalidos")
+		json.NewEncoder(w).Encode("Email o Password son invalidos2")
 		return
 	}
+	w.Header().Add("Content-Type", "application/json")
 	w.WriteHeader(http.StatusAccepted)
 	json.NewEncoder(w).Encode("Has iniciado sesion con exito")
 }
 
-func (h *Handler) HandleRegister (w http.ResponseWriter, r *http.Request){
+func (h *Handler) HandleRegister(w http.ResponseWriter, r *http.Request) {
 	///validar que el mail sea valido
 	var user types.ToRegister
 	json.NewDecoder(r.Body).Decode(&user)
-	_,err := h.store.GetUserByEmail(user.Email)
-	if err == nil{
+	_, err := h.store.GetUserByEmail(user.Email)
+	if err == nil {
+		w.Header().Add("Content-Type", "application/json")
 		w.WriteHeader(http.StatusExpectationFailed)
-	json.NewEncoder(w).Encode("El usuario ya se encuentra registrado.")
+		json.NewEncoder(w).Encode("El usuario ya se encuentra registrado.")
 		return
 	}
-	hashedPass,err := middleware.HashPassword(user.Password)
+	hashedPass, err := middleware.HashPassword(user.Password)
 	if err != nil{
+		w.Header().Add("Content-Type", "application/json")
+		w.WriteHeader(http.StatusOK)
+		json.NewEncoder(w).Encode("Error al codificar")
+		return
 		///devolver un error del servidor
 	}
 
 	err = h.store.CreateUser(types.User{
-		Alias: user.Alias,
-		Email: user.Email,
+		Alias:    user.Alias,
+		Email:    user.Email,
 		Password: hashedPass,
 	})
-	if err != nil{
+	if err != nil {
+		w.Header().Add("Content-Type", "application/json")
+		w.WriteHeader(http.StatusOK)
+		json.NewEncoder(w).Encode(err)
+		return
 		///devolver un error del servidor
 	}
+	w.Header().Add("Content-Type", "application/json")
 	w.WriteHeader(http.StatusOK)
 	json.NewEncoder(w).Encode("La cuenta se creo exitosamente")
 }
 
-func (h *Handler) HandleGetUser(w http.ResponseWriter, r *http.Request){
+func (h *Handler) HandleGetUser(w http.ResponseWriter, r *http.Request) {
 	vars := mux.Vars(r)
 
-	id,ok := vars["id"]
-	if !ok{
+	id, ok := vars["id"]
+	if !ok {
 		w.WriteHeader(http.StatusBadRequest)
 		json.NewEncoder(w).Encode("Falta el ID a buscar")
-		return		
+		return
 	}
-	userID,err := strconv.Atoi(id) 
-	if !ok{
+	userID, err := strconv.Atoi(id)
+	if !ok {
 		w.WriteHeader(http.StatusBadRequest)
 		json.NewEncoder(w).Encode("Falta el ID a buscar")
-		return		
+		return
 	}
-	user,err := h.store.GetUserById(userID)
-	if err != nil{
+	user, err := h.store.GetUserById(userID)
+	if err != nil {
 		w.WriteHeader(http.StatusBadRequest)
 		json.NewEncoder(w).Encode("No se encontro al cliente")
 		return

@@ -7,6 +7,7 @@ import (
 	"deck-builder-back/pkg/model"
 	"fmt"
 	"log"
+	"net/http"
 
 	"github.com/go-sql-driver/mysql"
 	"github.com/gorilla/mux"
@@ -39,7 +40,7 @@ func main(){
 	subr.HandleFunc("/login",userController.HandleLogin).Methods("POST")
 	subr.HandleFunc("/register",userController.HandleRegister).Methods("POST")
 	subr.HandleFunc("/user/{id}",userController.HandleGetUser).Methods("GET")
-
+	log.Fatal(http.ListenAndServe("localhost:9010", r))
 }
 
 func NewMySQLStorage(cfg mysql.Config)(*sql.DB, error){

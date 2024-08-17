@@ -3,6 +3,7 @@ package model
 import (
 	"database/sql"
 	"deck-builder-back/pkg/types"
+	"fmt"
 )
 
 type StoreDB struct{
@@ -14,7 +15,7 @@ func NewStore(cfg *sql.DB) *StoreDB{
 }
 
 func (s *StoreDB) CreateUser(user types.User) error{
-	_, err:= s.db.Query("INSERT INTO users (alias, email, password) VALUES(?,?,?)",user.Alias, user.Email, user.Password)
+	_, err:= s.db.Exec("INSERT INTO users (alias, email, password) VALUES(?,?,?);",user.Alias, user.Email, user.Password)
 	if err != nil{
 		return err
 	}
@@ -22,27 +23,26 @@ func (s *StoreDB) CreateUser(user types.User) error{
 }
 
 func (s *StoreDB) GetUserByEmail(email string) (*types.User, error){
-	 rows, err := s.db.Query("SELECT * FROM users WHERE email = ?",email)
+	 rows, err := s.db.Query("SELECT id, alias, email, password FROM users WHERE email = ?",email)
 	 if err != nil{
 		return nil, err
 	 }
 	 user := new(types.User)
 	 for rows.Next(){
 		user, err = scanRowsIntoUser(rows)
-		if err != nil{
+		if err != nil {
 			return nil, err
 		}
 	 }
 	 if user.ID == 0{
-		return nil,err
+		return user,err
 	 }
-
-	 return user,nil
+	 return user,fmt.Errorf("user not found")
 	
 }
 
 func (s *StoreDB) GetUserById(id int)(*types.User, error){
-	rows, err := s.db.Query("SELECT * FROM users WHERE id = ?",id)
+	rows, err := s.db.Query("SELECT id, alias, email, password FROM users WHERE id = ?",id)
 	if err != nil{
 		return nil,err
 	}
@@ -50,6 +50,7 @@ func (s *StoreDB) GetUserById(id int)(*types.User, error){
 	for rows.Next(){
 		user, err = scanRowsIntoUser(rows)
 		if err != nil{
+			
 			return nil,err
 		}
 	}
@@ -70,14 +71,13 @@ func (s *StoreDB) UpdateUser(user *types.User) error {
 func scanRowsIntoUser(rows *sql.Rows) (*types.User, error){
 	user := new(types.User)
 
-	err:= rows.Scan(
+	err := rows.Scan(
 		&user.ID,
 		&user.Alias,
 		&user.Email,
 		&user.Password,
-		&user.ManyDecks,
 	)
-	if err != nil{
+	if err != nil {
 		return nil, err
 	}
 	return user, nil
