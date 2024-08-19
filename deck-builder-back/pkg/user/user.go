@@ -1,4 +1,4 @@
-package model
+package user
 
 import (
 	"database/sql"
@@ -35,9 +35,9 @@ func (s *StoreDB) GetUserByEmail(email string) (*types.User, error){
 		}
 	 }
 	 if user.ID == 0{
-		return user,err
+		return user,fmt.Errorf("user not found")
 	 }
-	 return user,fmt.Errorf("user not found")
+	 return user,nil
 	
 }
 

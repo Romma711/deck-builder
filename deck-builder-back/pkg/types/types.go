@@ -26,3 +26,15 @@ type ToLogin struct{
 	Email     string `json:"email" validate:"required"`
 	Password  string `json:"password" validate:"required"`
 }
+
+type Deck struct{
+	ID int `json:"id"`
+	Name string `json:"name"`
+	Format int `json:"format"`
+	DeckSize int `json:"deck_size"`
+	CreatedBy int `json:"created_by"`
+	DeckList string `json:"deck_list"`
+}
+type DeckStore interface{
+	
+}

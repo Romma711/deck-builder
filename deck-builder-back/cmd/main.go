@@ -3,8 +3,8 @@ package main
 import (
 	"database/sql"
 	"deck-builder-back/pkg/config"
-	"deck-builder-back/pkg/controller"
-	"deck-builder-back/pkg/model"
+	"deck-builder-back/pkg/user"
+	"deck-builder-back/pkg/deck"
 	"fmt"
 	"log"
 	"net/http"
@@ -31,8 +31,8 @@ func main(){
 
 	initStorage(db)
 
-	userModel:=model.NewStore(db)
-	userController:= controller.NewHandler(userModel)
+	userModel:=user.NewStore(db)
+	userController:= user.NewHandler(userModel)
 
 	r := mux.NewRouter()
 	subr:= r.PathPrefix("/api").Subrouter()

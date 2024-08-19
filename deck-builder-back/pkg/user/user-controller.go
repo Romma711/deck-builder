@@ -1,7 +1,7 @@
-package controller
+package user
 
 import (
-	middleware "deck-builder-back/pkg/controller/middlewere"
+	"deck-builder-back/pkg/controller/middlewere"
 	"deck-builder-back/pkg/types"
 	"encoding/json"
 	"net/http"
