@@ -14,7 +14,7 @@ func NewStore(cfg *sql.DB) *StoreDB{
 	return &StoreDB{db: cfg}
 }
 
-func (s *StoreDB) CreateUser(deck types.Deck) error{
+func (s *StoreDB) CreateDeck(deck types.Deck) error{
 	_, err:= s.db.Exec("INSERT INTO decks (name, format, deck_size, created_by, deck_list) VALUES(?,?,?,?,?);",deck.Name,deck.Format,deck.DeckSize,deck.CreatedBy,deck.DeckList)
 	if err != nil{
 		return err
