@@ -4,9 +4,6 @@ import (
 	"deck-builder-back/pkg/types"
 	"encoding/json"
 	"net/http"
-	"strconv"
-
-	"github.com/gorilla/mux"
 )
 
 type Handler struct {
@@ -17,7 +14,7 @@ func NewHandler(store types.DeckStore) *Handler {
 	return &Handler{store: store}
 }
 
-func (h *Handler) handleCreateNewDeck(w http.ResponseWriter, r *http.Request) {
+func (h *Handler) HandleCreateNewDeck(w http.ResponseWriter, r *http.Request) {
 	var deck types.Deck
 	json.NewDecoder(r.Body).Decode(&deck)
 	switch deck.Format{
@@ -53,4 +50,32 @@ func (h *Handler) handleCreateNewDeck(w http.ResponseWriter, r *http.Request) {
 	w.Header().Add("Content-Type", "application/json")
 	w.WriteHeader(http.StatusOK)
 	json.NewEncoder(w).Encode("Deck succesfully created")
+}
+
+func (h *Handler) HandleGetDeckByName(w http.ResponseWriter, r *http.Request){
+	var name string
+	json.NewDecoder(r.Body).Decode(&name)
+	res, err := h.store.GetDeckByName(name)
+	if err != nil{
+		w.Header().Add("Content-Type", "application/json")
+		w.WriteHeader(http.StatusBadRequest)
+		json.NewEncoder(w).Encode(err)
+	}
+	w.Header().Add("Content-Type", "application/json")
+	w.WriteHeader(http.StatusOK)
+	json.NewEncoder(w).Encode(res)
+}
+
+func (h *Handler) HandleGetDeckByUser(w http.ResponseWriter, r *http.Request){
+	var id int
+	json.NewDecoder(r.Body).Decode(&id)
+	res, err := h.store.GetDecksByUser(id)
+	if err != nil{
+		w.Header().Add("Content-Type", "application/json")
+		w.WriteHeader(http.StatusBadRequest)
+		json.NewEncoder(w).Encode(err)
+	}
+	w.Header().Add("Content-Type", "application/json")
+	w.WriteHeader(http.StatusOK)
+	json.NewEncoder(w).Encode(res)
 }

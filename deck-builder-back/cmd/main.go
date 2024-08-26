@@ -34,12 +34,18 @@ func main(){
 	userModel:=user.NewStore(db)
 	userController:= user.NewHandler(userModel)
 
+	deckModel:=deck.NewStore(db)
+	deckController:=deck.NewHandler(deckModel)
+
 	r := mux.NewRouter()
 	subr:= r.PathPrefix("/api").Subrouter()
 
 	subr.HandleFunc("/login",userController.HandleLogin).Methods("POST")
 	subr.HandleFunc("/register",userController.HandleRegister).Methods("POST")
 	subr.HandleFunc("/user/{id}",userController.HandleGetUser).Methods("GET")
+	subr.HandleFunc("/deck/{name}", deckController.HandleGetDeckByName).Methods("GET")
+	subr.HandleFunc("/deck/{id}", deckController.HandleGetDeckByUser).Methods("GET")
+	subr.HandleFunc("/deck/create", deckController.HandleCreateNewDeck).Methods("POST")
 	log.Fatal(http.ListenAndServe("localhost:9010", r))
 }
 
