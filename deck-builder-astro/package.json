@@ -1,5 +1,5 @@
 {
-  "name": "deck-builder-front",
+  "name": "deck-builder-astro",
   "type": "module",
   "version": "0.0.1",
   "scripts": {
@@ -10,6 +10,6 @@
     "astro": "astro"
   },
   "dependencies": {
-    "astro": "^4.11.6"
+    "astro": "^4.15.3"
   }
 }
