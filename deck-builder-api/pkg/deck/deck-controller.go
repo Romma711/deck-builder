@@ -3,6 +3,7 @@ package deck
 import (
 	"deck-builder-back/pkg/types"
 	"encoding/json"
+	"fmt"
 	"net/http"
 )
 
@@ -55,6 +56,7 @@ func (h *Handler) HandleCreateNewDeck(w http.ResponseWriter, r *http.Request) {
 func (h *Handler) HandleGetDeckByName(w http.ResponseWriter, r *http.Request) {
 	queryParams := r.URL.Query()
 	name := queryParams.Get("name")
+	fmt.Println(queryParams)
 	res, err := h.store.GetDeckByName(name)
 	if err != nil {
 		w.Header().Add("Content-Type", "application/json")
