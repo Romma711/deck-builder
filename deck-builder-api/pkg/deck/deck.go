@@ -37,7 +37,6 @@ func (s *StoreDB) GetDeckByName(name string) (*types.Deck, error) {
 	if deck.ID == 0 {
 		return nil, fmt.Errorf("deck not found")
 	}
-	fmt.Println(deck)
 	return deck, nil
 }
 
@@ -72,7 +71,6 @@ func scanRowsIntoDeck(rows *sql.Rows) (*types.Deck, error) {
 		&deck.CreatedBy,
 		&deck.DeckList,
 	)
-	fmt.Println(deck)
 	if err != nil {
 		return nil, err
 	}
