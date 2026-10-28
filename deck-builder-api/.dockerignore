@@ -1,0 +1,13 @@
+# Contexto de build mínimo: solo lo necesario para compilar.
+.git
+.gitignore
+.env
+.env.*
+!.env.example
+tmp/
+*.md
+docker-compose.yml
+deploy/
+Dockerfile
+.dockerignore
+.air.toml
