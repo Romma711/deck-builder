@@ -51,7 +51,9 @@ func cors(allowedOrigins []string) gin.HandlerFunc {
 				acao = "*"
 			}
 			c.Header("Access-Control-Allow-Origin", acao)
-			c.Header("Access-Control-Expose-Headers", HeaderRequestID)
+			// Retry-After no es un header "safelisted": sin exponerlo, el
+			// navegador no deja leer cuánto esperar ante un 429.
+			c.Header("Access-Control-Expose-Headers", HeaderRequestID+", Retry-After")
 		}
 
 		// Preflight: respondemos 204 sin pasar al handler.
