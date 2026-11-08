@@ -15,6 +15,7 @@ import "time"
 type Deck struct {
 	ID          string
 	OwnerID     string
+	OwnerName   string // username del dueño (denormalizado en lecturas via JOIN)
 	GameID      string
 	GameCode    string // "mtg"... (denormalizado en lecturas via JOIN)
 	OrgID       string // "" = personal

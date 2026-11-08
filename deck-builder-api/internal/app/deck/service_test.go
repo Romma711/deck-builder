@@ -42,7 +42,7 @@ func (f *fakeDeckRepo) FindByID(_ context.Context, id string) (*domain.Deck, err
 	return nil, domain.ErrNotFound
 }
 
-func (f *fakeDeckRepo) Find(_ context.Context, filter ports.DeckFilter) ([]domain.Deck, error) {
+func (f *fakeDeckRepo) Find(_ context.Context, filter ports.DeckFilter) ([]domain.Deck, int64, error) {
 	f.lastFilter = filter
 	var result []domain.Deck
 	for _, deck := range f.decks {
@@ -60,7 +60,7 @@ func (f *fakeDeckRepo) Find(_ context.Context, filter ports.DeckFilter) ([]domai
 		}
 		result = append(result, *deck)
 	}
-	return result, nil
+	return result, int64(len(result)), nil
 }
 
 func (f *fakeDeckRepo) Update(_ context.Context, deck *domain.Deck) error {
@@ -97,10 +97,10 @@ func newFakeGameRepo() *fakeGameRepo {
 					Name: "Standard", DeckSize: 60, MinSize: 60, MaxSize: 60},
 			},
 		},
-		"yuigoh": {
-			ID: "game-yuigoh", Code: "yuigoh", Name: "Yu-Gi-Oh!", Active: true,
+		"yugioh": {
+			ID: "game-yugioh", Code: "yugioh", Name: "Yu-Gi-Oh!", Active: true,
 			Formats: []domain.Format{
-				{ID: "f-master", GameID: "game-yuigoh", Code: "master",
+				{ID: "f-master", GameID: "game-yugioh", Code: "master",
 					Name: "Master Duel", MinSize: 40, MaxSize: 60},
 			},
 		},
@@ -282,10 +282,17 @@ func validInput() DeckInput {
 		GameCode: "mtg",
 		Format:   "commander",
 		Leader:   testCardMTG("Atraxa"),
-		Cards: []domain.CardEntry{
-			{Card: *testCardMTG("Sol Ring"), Quantity: 1},
-		},
+		Cards:    singletonCards(99),
 	}
+}
+
+// singletonCards arma n cartas distintas, una copia de cada una.
+func singletonCards(n int) []domain.CardEntry {
+	cards := make([]domain.CardEntry, n)
+	for i := range cards {
+		cards[i] = domain.CardEntry{Card: *testCardMTG(fmt.Sprintf("Carta %d", i)), Quantity: 1}
+	}
+	return cards
 }
 
 func newTestService() (*Service, *fakeDeckRepo, *fakeCardRepo, *fakeMembershipRepo) {
@@ -334,18 +341,22 @@ func TestCreate_ResuelveCartasAlCatalogo(t *testing.T) {
 	svc, _, cardRepo, _ := newTestService()
 
 	in := validInput()
+	in.Format = "standard"
+	in.DeckSize = 60
+	in.Leader = nil
 	in.Cards = []domain.CardEntry{
 		{Card: *testCardMTG("Sol Ring"), Quantity: 1},
 		// Misma identidad que la anterior: debe deduplicarse sumando cantidad.
 		{Card: *testCardMTG("Sol Ring"), Quantity: 2},
+		{Card: *testCardMTG("Forest"), Quantity: 57},
 	}
 
 	deck, err := svc.Create(context.Background(), ownerA, in)
 	if err != nil {
 		t.Fatalf("Create falló: %v", err)
 	}
-	if len(deck.Cards) != 1 {
-		t.Fatalf("cartas = %d, esperaba 1 tras deduplicar", len(deck.Cards))
+	if len(deck.Cards) != 2 {
+		t.Fatalf("cartas = %d, esperaba 2 tras deduplicar", len(deck.Cards))
 	}
 	if deck.Cards[0].Quantity != 3 {
 		t.Errorf("quantity = %d, esperaba 3 (1+2)", deck.Cards[0].Quantity)
@@ -353,7 +364,7 @@ func TestCreate_ResuelveCartasAlCatalogo(t *testing.T) {
 	if deck.Cards[0].Card.ID == "" {
 		t.Error("la carta debió resolverse al catálogo (con ID)")
 	}
-	if len(cardRepo.byIdent) != 2 { // Atraxa + Sol Ring
+	if len(cardRepo.byIdent) != 2 { // Sol Ring + Forest
 		t.Errorf("catálogo = %d cartas, esperaba 2", len(cardRepo.byIdent))
 	}
 }
@@ -394,7 +405,7 @@ func TestCreate_FormatoInvalidoParaElJuego(t *testing.T) {
 	svc, _, _, _ := newTestService()
 
 	in := validInput()
-	// "master" existe en yuigoh, no en mtg.
+	// "master" existe en yugioh, no en mtg.
 	in.Format = "master"
 
 	_, err := svc.Create(context.Background(), ownerA, in)
@@ -411,12 +422,12 @@ func TestCreate_TamanoFueraDeRango_ValidationError(t *testing.T) {
 	svc, _, _, _ := newTestService()
 
 	in := validInput()
-	in.GameCode = "yuigoh"
+	in.GameCode = "yugioh"
 	in.Format = "master"
 	in.DeckSize = 30 // master pide 40-60
 	in.Leader = nil
 	in.Cards = []domain.CardEntry{
-		{Card: *yuigohCard("Blue-Eyes", "Monster", 3000, 2500), Quantity: 3},
+		{Card: *yugiohCard("Blue-Eyes", "Monster", 3000, 2500), Quantity: 3},
 	}
 
 	_, err := svc.Create(context.Background(), ownerA, in)
@@ -462,7 +473,7 @@ func TestCreate_CartaConAtributosInvalidos_AcumulaErroresPorIndice(t *testing.T)
 	bad := testCardMTG("Mala")
 	bad.Attributes["mana_value"] = 99.0
 	bad.Attributes["type"] = "Tribal"
-	in.Cards = append(in.Cards, domain.CardEntry{Card: *bad, Quantity: 1})
+	in.Cards = append(singletonCards(1), domain.CardEntry{Card: *bad, Quantity: 1})
 
 	_, err := svc.Create(context.Background(), ownerA, in)
 	var ve *domain.ValidationError
@@ -498,7 +509,7 @@ func TestCreate_MTGCopiasLimite(t *testing.T) {
 	}
 }
 
-func yuigohCard(name, cardType string, atk, def int) *domain.Card {
+func yugiohCard(name, cardType string, atk, def int) *domain.Card {
 	attrs := map[string]any{"card_type": cardType}
 	if cardType == "Monster" {
 		attrs["atk"] = float64(atk)
@@ -612,7 +623,7 @@ func TestList_PasaFiltrosNormalizados(t *testing.T) {
 	svc, repo, _, _ := newTestService()
 	_, _ = svc.Create(context.Background(), ownerA, validInput())
 
-	if _, err := svc.List(context.Background(), ports.DeckFilter{
+	if _, _, err := svc.List(context.Background(), ports.DeckFilter{
 		GameCode: " MTG ", OwnerID: ownerA, Format: " COMMANDER ", LeaderName: "Atraxa",
 	}); err != nil {
 		t.Fatalf("List falló: %v", err)
@@ -725,5 +736,38 @@ func TestUpdate_MazoOrg_RequiereMembresia(t *testing.T) {
 	in2.OrgID = orgX
 	if _, err := svc.Update(context.Background(), deck.ID, ownerA, in2); !errors.Is(err, domain.ErrForbidden) {
 		t.Fatalf("err = %v, esperaba ErrForbidden tras perder la membresía", err)
+	}
+}
+
+func TestCreate_DeckSizeDebeCoincidirConLasCartas(t *testing.T) {
+	svc, _, _, _ := newTestService()
+
+	in := validInput()
+	in.Cards = singletonCards(98) // 98 + comandante = 99, se declaran 100
+
+	_, err := svc.Create(context.Background(), ownerA, in)
+	var ve *domain.ValidationError
+	if !errors.As(err, &ve) {
+		t.Fatalf("esperaba *domain.ValidationError, obtuve %v", err)
+	}
+	if ve.Details["DeckSize"] != "mismatch_cards=99" {
+		t.Errorf("detalles = %v, esperaba mismatch_cards=99", ve.Details)
+	}
+}
+
+func TestCreate_CommanderEsSingleton(t *testing.T) {
+	svc, _, _, _ := newTestService()
+
+	in := validInput()
+	in.Cards = singletonCards(97)
+	in.Cards = append(in.Cards, domain.CardEntry{Card: *testCardMTG("Sol Ring"), Quantity: 2})
+
+	_, err := svc.Create(context.Background(), ownerA, in)
+	var ve *domain.ValidationError
+	if !errors.As(err, &ve) {
+		t.Fatalf("esperaba *domain.ValidationError, obtuve %v", err)
+	}
+	if ve.Details["cards.Sol Ring"] != "max=1_copies" {
+		t.Errorf("detalles = %v, esperaba max=1_copies", ve.Details)
 	}
 }

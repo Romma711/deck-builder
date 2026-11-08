@@ -10,14 +10,16 @@ var _ ports.GameSpec = (*YuGiOhSpec)(nil)
 
 type YuGiOhSpec struct{}
 
-func (YuGiOhSpec) GameCode() string { return "yuigoh" }
+func (YuGiOhSpec) GameCode() string { return "yugioh" }
 
-var yuigohCardTypes = []string{"Monster", "Spell", "Trap"}
+func (YuGiOhSpec) LeaderCountsTowardSize() bool { return false }
+
+var yugiohCardTypes = []string{"Monster", "Spell", "Trap"}
 
 // ValidateCard: card_type obligatorio; los monstruos exigen atk/def ≥ 0.
 func (YuGiOhSpec) ValidateCard(card *domain.Card) error {
 	c := newErrorCollector()
-	requireOneof(c, card.Attributes, "card_type", yuigohCardTypes)
+	requireOneof(c, card.Attributes, "card_type", yugiohCardTypes)
 
 	cardType, _ := attrString(card.Attributes, "card_type")
 	if cardType == "Monster" {

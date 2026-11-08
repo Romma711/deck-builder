@@ -2,6 +2,7 @@ package httpapi
 
 import (
 	"net/http"
+	"strconv"
 	"time"
 
 	deckapp "github.com/Romma711/deck-builder/internal/app/deck"
@@ -81,9 +82,15 @@ type cardEntryResponse struct {
 	Quantity int          `json:"quantity"`
 }
 
+const (
+	defaultDeckPageSize = 50
+	maxDeckPageSize     = 100
+)
+
 type deckResponse struct {
 	ID          string              `json:"id"`
 	OwnerID     string              `json:"owner_id"`
+	OwnerName   string              `json:"owner_username"`
 	OrgID       string              `json:"org_id,omitempty"` // vacío = mazo personal
 	Private     bool                `json:"private"`
 	Name        string              `json:"name"`
@@ -115,6 +122,7 @@ func newDeckResponse(deck *domain.Deck) deckResponse {
 	resp := deckResponse{
 		ID:          deck.ID,
 		OwnerID:     deck.OwnerID,
+		OwnerName:   deck.OwnerName,
 		OrgID:       deck.OrgID,
 		Private:     deck.IsPrivate,
 		Name:        deck.Name,
@@ -211,12 +219,16 @@ func (h *deckHandler) get(c *gin.Context) {
 }
 
 func (h *deckHandler) list(c *gin.Context) {
-	decks, err := h.svc.List(c.Request.Context(), ports.DeckFilter{
+	limit, offset := pageParams(c)
+	decks, total, err := h.svc.List(c.Request.Context(), ports.DeckFilter{
 		GameCode:   c.Query("game"),
 		OwnerID:    c.Query("owner"),
 		OrgID:      c.Query("org"),
 		Format:     c.Query("format"),
 		LeaderName: c.Query("leader"),
+		Author:     c.Query("author"),
+		Limit:      limit,
+		Offset:     offset,
 	})
 	if err != nil {
 		RespondError(c, err)
@@ -227,7 +239,7 @@ func (h *deckHandler) list(c *gin.Context) {
 	for i := range decks {
 		items = append(items, newDeckResponse(&decks[i]))
 	}
-	c.JSON(http.StatusOK, gin.H{"data": items, "meta": gin.H{"total": len(items)}})
+	c.JSON(http.StatusOK, gin.H{"data": items, "meta": gin.H{"total": total, "limit": limit, "offset": offset}})
 }
 
 func (h *deckHandler) update(c *gin.Context) {
@@ -267,4 +279,18 @@ func (h *deckHandler) delete(c *gin.Context) {
 		return
 	}
 	c.Status(http.StatusNoContent)
+}
+
+// pageParams lee limit/offset de la query. Valores ausentes o fuera de rango
+// usan el default; devuelve el limit efectivo para informarlo en meta.
+func pageParams(c *gin.Context) (limit, offset int) {
+	limit, _ = strconv.Atoi(c.Query("limit"))
+	if limit <= 0 || limit > maxDeckPageSize {
+		limit = defaultDeckPageSize
+	}
+	offset, _ = strconv.Atoi(c.Query("offset"))
+	if offset < 0 {
+		offset = 0
+	}
+	return limit, offset
 }

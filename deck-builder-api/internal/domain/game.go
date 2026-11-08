@@ -4,7 +4,7 @@ package domain
 // Los juegos y formatos se persisten en PostgreSQL (sembrados por migración).
 type Game struct {
 	ID      string
-	Code    string // "mtg", "pokemon", "yuigoh", "onepiece"
+	Code    string // "mtg", "pokemon", "yugioh", "onepiece"
 	Name    string
 	Active  bool
 	Formats []Format

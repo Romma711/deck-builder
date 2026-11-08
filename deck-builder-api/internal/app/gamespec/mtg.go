@@ -14,6 +14,9 @@ type MTGSpec struct{}
 
 func (MTGSpec) GameCode() string { return "mtg" }
 
+// En Commander el comandante es parte de las 100 cartas.
+func (MTGSpec) LeaderCountsTowardSize() bool { return true }
+
 var (
 	mtgColors = []string{"White", "Blue", "Black", "Red", "Green", "Colorless"}
 	mtgTypes  = []string{"Creature", "Instant", "Sorcery", "Artifact", "Enchantment", "Land", "Planeswalker"}
@@ -22,6 +25,8 @@ var (
 		"Plains": true, "Island": true, "Swamp": true,
 		"Mountain": true, "Forest": true, "Wastes": true,
 	}
+	// Formatos singleton: una sola copia por carta (básicas exentas).
+	mtgSingletonFormats = map[string]bool{"commander": true, "brawl": true}
 )
 
 // ValidateCard: mana_value [0,20], type en la lista MTG, colors subconjunto.
@@ -51,8 +56,13 @@ func (MTGSpec) ValidateCard(card *domain.Card) error {
 	return c.fail()
 }
 
-// ValidateDeck: máximo 4 copias por nombre (básicas exentas).
-func (MTGSpec) ValidateDeck(deck *domain.Deck, _ *domain.Format) error {
+// ValidateDeck: máximo 4 copias por nombre, 1 en formatos singleton (básicas exentas).
+func (MTGSpec) ValidateDeck(deck *domain.Deck, format *domain.Format) error {
+	limit := 4
+	if format != nil && mtgSingletonFormats[format.Code] {
+		limit = 1
+	}
+
 	quantities := map[string]int{}
 	for _, entry := range deck.Cards {
 		quantities[entry.Card.Name] += entry.Quantity
@@ -63,8 +73,8 @@ func (MTGSpec) ValidateDeck(deck *domain.Deck, _ *domain.Format) error {
 		if mtgBasicLands[name] {
 			continue
 		}
-		if qty > 4 {
-			c.add("cards."+name, "max=4_copies")
+		if qty > limit {
+			c.add("cards."+name, fmt.Sprintf("max=%d_copies", limit))
 		}
 	}
 	return c.fail()

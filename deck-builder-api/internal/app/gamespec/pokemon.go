@@ -12,6 +12,8 @@ type PokemonSpec struct{}
 
 func (PokemonSpec) GameCode() string { return "pokemon" }
 
+func (PokemonSpec) LeaderCountsTowardSize() bool { return false }
+
 var (
 	pokemonKinds      = []string{"pokemon", "trainer", "energy"}
 	pokemonEnergyType = []string{

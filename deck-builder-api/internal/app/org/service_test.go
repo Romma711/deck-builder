@@ -631,3 +631,9 @@ func TestRoleAtLeast_Jerarquia(t *testing.T) {
 		}
 	}
 }
+
+func TestSlugify_QuitaAcentos(t *testing.T) {
+	if got := slugify("Club Ñandú Café"); got != "club-nandu-cafe" {
+		t.Errorf("slugify = %q, esperaba club-nandu-cafe", got)
+	}
+}

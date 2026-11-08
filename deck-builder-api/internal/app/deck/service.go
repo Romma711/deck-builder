@@ -82,7 +82,7 @@ func (s *Service) GetByID(ctx context.Context, id string) (*domain.Deck, error) 
 }
 
 // List aplica filtros de búsqueda (sin el array de cartas, proyección liviana).
-func (s *Service) List(ctx context.Context, filter ports.DeckFilter) ([]domain.Deck, error) {
+func (s *Service) List(ctx context.Context, filter ports.DeckFilter) ([]domain.Deck, int64, error) {
 	filter.Format = strings.ToLower(strings.TrimSpace(filter.Format))
 	filter.GameCode = strings.ToLower(strings.TrimSpace(filter.GameCode))
 	return s.decks.Find(ctx, filter)
@@ -233,7 +233,31 @@ func (s *Service) validate(ctx context.Context, ownerID string, in DeckInput) (*
 		return nil, err
 	}
 
+	// El tamaño declarado debe coincidir con las cartas enviadas.
+	if actual := countCards(spec, deck); actual != in.DeckSize {
+		return nil, &domain.ValidationError{
+			Details: map[string]string{"DeckSize": fmt.Sprintf("mismatch_cards=%d", actual)},
+		}
+	}
+
 	return deck, nil
+}
+
+// countCards suma las copias del mazo y, si el juego lo indica, líder y partner.
+func countCards(spec ports.GameSpec, deck *domain.Deck) int {
+	total := 0
+	for _, entry := range deck.Cards {
+		total += entry.Quantity
+	}
+	if spec.LeaderCountsTowardSize() {
+		if deck.LeaderCard != nil {
+			total++
+		}
+		if deck.PartnerCard != nil {
+			total++
+		}
+	}
+	return total
 }
 
 func validateAllCards(spec ports.GameSpec, deck *domain.Deck) error {

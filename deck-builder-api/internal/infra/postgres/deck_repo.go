@@ -123,8 +123,9 @@ func (r *DeckRepository) FindByID(ctx context.Context, id string) (*domain.Deck,
 	err = r.withRLS(ctx, func(tx *gorm.DB) error {
 		var row deckWithGame
 		dbErr := tx.
-			Select("decks.*, games.code AS game_code").
+			Select(deckColumns).
 			Joins("JOIN games ON games.id = decks.game_id").
+			Joins("JOIN users ON users.id = decks.owner_id").
 			Where("decks.id = ?", did).
 			First(&row).Error
 		if dbErr != nil {
@@ -156,24 +157,30 @@ func (r *DeckRepository) FindByID(ctx context.Context, id string) (*domain.Deck,
 // Find lista mazos con filtros. Proyección liviana: incluye líder/partner
 // (resueltos en lote) pero no el array completo de cartas. La visibilidad
 // (público/propio/org) la aplica RLS: un privado ajeno jamás aparece.
-func (r *DeckRepository) Find(ctx context.Context, filter ports.DeckFilter) ([]domain.Deck, error) {
+func (r *DeckRepository) Find(ctx context.Context, filter ports.DeckFilter) ([]domain.Deck, int64, error) {
 	// Validamos IDs ANTES de transaccionar (error claro sin abrir tx).
 	if filter.OwnerID != "" {
 		if _, err := toUUID(filter.OwnerID); err != nil {
-			return nil, err
+			return nil, 0, err
 		}
 	}
 	if filter.OrgID != "" {
 		if _, err := toUUID(filter.OrgID); err != nil {
-			return nil, err
+			return nil, 0, err
 		}
 	}
 
+	limit := filter.Limit
+	if limit <= 0 || limit > 100 {
+		limit = 50
+	}
+
 	var decks []domain.Deck
+	var total int64
 	err := r.withRLS(ctx, func(tx *gorm.DB) error {
-		query := tx.
-			Select("decks.*, games.code AS game_code").
-			Joins("JOIN games ON games.id = decks.game_id")
+		query := tx.Model(&DeckModel{}).
+			Joins("JOIN games ON games.id = decks.game_id").
+			Joins("JOIN users ON users.id = decks.owner_id")
 
 		if filter.OwnerID != "" {
 			ownerID, _ := toUUID(filter.OwnerID)
@@ -191,13 +198,22 @@ func (r *DeckRepository) Find(ctx context.Context, filter ports.DeckFilter) ([]d
 		}
 		if filter.LeaderName != "" {
 			query = query.Where(
-				"EXISTS (SELECT 1 FROM cards c WHERE c.id = decks.leader_card_id AND c.name = ?)",
-				filter.LeaderName)
+				"EXISTS (SELECT 1 FROM cards c WHERE c.id = decks.leader_card_id AND c.name ILIKE ?)",
+				"%"+escapeLike(filter.LeaderName)+"%")
 		}
-		query = query.Order("decks.created_at DESC")
+		if filter.Author != "" {
+			query = query.Where("users.username ILIKE ?", "%"+escapeLike(filter.Author)+"%")
+		}
+
+		if err := query.Session(&gorm.Session{}).Count(&total).Error; err != nil {
+			return fmt.Errorf("contar mazos: %w", err)
+		}
 
 		var rows []deckWithGame
-		if err := query.Find(&rows).Error; err != nil {
+		if err := query.Select(deckColumns).
+			Order("decks.created_at DESC, decks.id DESC").
+			Limit(limit).Offset(filter.Offset).
+			Find(&rows).Error; err != nil {
 			return fmt.Errorf("listar mazos: %w", err)
 		}
 
@@ -217,9 +233,9 @@ func (r *DeckRepository) Find(ctx context.Context, filter ports.DeckFilter) ([]d
 		return loadLeaders(tx, pointers)
 	})
 	if err != nil {
-		return nil, err
+		return nil, 0, err
 	}
-	return decks, nil
+	return decks, total, nil
 }
 
 // Update reemplaza los datos del mazo y su lista de cartas en una transacción.
@@ -412,15 +428,20 @@ func loadCards(tx *gorm.DB, deck *domain.Deck) error {
 // --- converters ---
 
 // deckWithGame extiende la fila del mazo con el código del juego (JOIN).
+// deckColumns requiere los JOIN con games y users.
+const deckColumns = "decks.*, games.code AS game_code, users.username AS owner_username"
+
 type deckWithGame struct {
 	DeckModel
-	GameCode string `gorm:"column:game_code"`
+	GameCode      string `gorm:"column:game_code"`
+	OwnerUsername string `gorm:"column:owner_username"`
 }
 
 func (row deckWithGame) toDeck() (*domain.Deck, error) {
 	deck := &domain.Deck{
 		ID:          row.ID.String(),
 		OwnerID:     row.OwnerID.String(),
+		OwnerName:   row.OwnerUsername,
 		GameID:      row.GameID.String(),
 		GameCode:    row.GameCode,
 		IsPrivate:   row.IsPrivate,
