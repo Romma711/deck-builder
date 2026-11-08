@@ -361,14 +361,14 @@ func TestIntegration_RLS_VisibilidadDeMazos(t *testing.T) {
 
 	// 6. Listados acotados por RLS:
 	//    anónimo → solo el público (1); bob → público + org privado (2).
-	anon, err := deckRepo.Find(context.Background(), ports.DeckFilter{})
+	anon, _, err := deckRepo.Find(context.Background(), ports.DeckFilter{})
 	if err != nil {
 		t.Fatalf("Find anónimo: %v", err)
 	}
 	if len(anon) != 1 || anon[0].ID != alicePublic.ID {
 		t.Fatalf("Find anónimo = %d mazos, esperaba solo el público", len(anon))
 	}
-	seenByBob, err := deckRepo.Find(ctxAs(bob.ID), ports.DeckFilter{})
+	seenByBob, _, err := deckRepo.Find(ctxAs(bob.ID), ports.DeckFilter{})
 	if err != nil {
 		t.Fatalf("Find bob: %v", err)
 	}

@@ -14,6 +14,9 @@ type OnePieceSpec struct{}
 
 func (OnePieceSpec) GameCode() string { return "onepiece" }
 
+// En One Piece el líder va aparte de las cartas del mazo.
+func (OnePieceSpec) LeaderCountsTowardSize() bool { return false }
+
 var onepieceCardTypes = []string{"Leader", "Character", "Event", "Stage"}
 
 // ValidateCard: card_type obligatorio; líderes exigen life ≥ 1; personajes
@@ -32,9 +35,23 @@ func (OnePieceSpec) ValidateCard(card *domain.Card) error {
 	return c.fail()
 }
 
-// ValidateDeck: el líder del mazo debe ser de tipo "Leader".
-// One Piece no impone límite de copias por carta en su reglamento actual.
+// ValidateDeck: el líder debe ser de tipo "Leader" y hay máximo 4 copias por
+// número de carta (distintas cartas pueden compartir nombre, como Luffy).
 func (OnePieceSpec) ValidateDeck(deck *domain.Deck, format *domain.Format) error {
+	quantities := map[string]int{}
+	for _, entry := range deck.Cards {
+		quantities[entry.Card.SerialSet] += entry.Quantity
+	}
+	c := newErrorCollector()
+	for serial, qty := range quantities {
+		if qty > 4 {
+			c.add("cards."+serial, "max=4_copies")
+		}
+	}
+	if err := c.fail(); err != nil {
+		return err
+	}
+
 	if format.RequiresLeader && deck.LeaderCard != nil {
 		if kind, _ := attrString(deck.LeaderCard.Attributes, "card_type"); kind != "Leader" {
 			return &domain.ValidationError{Details: map[string]string{

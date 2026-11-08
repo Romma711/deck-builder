@@ -10,6 +10,9 @@ type GameSpec interface {
 	// GameCode identifica al juego que implementa ("mtg", "pokemon"...).
 	GameCode() string
 
+	// LeaderCountsTowardSize indica si líder y partner suman al tamaño del mazo.
+	LeaderCountsTowardSize() bool
+
 	// ValidateCard valida los atributos específicos del juego para una carta
 	// (ej.: MTG exige mana_value y type; Pokémon exige hp). Debe devolver
 	// *domain.ValidationError con detalles por atributo.

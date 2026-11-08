@@ -26,7 +26,7 @@ func TestRegistry_DuplicadoYVacio(t *testing.T) {
 	if err != nil {
 		t.Fatalf("NewRegistry falló: %v", err)
 	}
-	for _, code := range []string{"mtg", "pokemon", "yuigoh", "onepiece"} {
+	for _, code := range []string{"mtg", "pokemon", "yugioh", "onepiece"} {
 		if _, ok := r.Spec(code); !ok {
 			t.Errorf("falta el spec para %q", code)
 		}
@@ -68,7 +68,7 @@ func TestMTG_ValidateCard(t *testing.T) {
 
 func TestMTG_ValidateDeck_Copias(t *testing.T) {
 	spec := MTGSpec{}
-	format := &domain.Format{Code: "commander"}
+	format := &domain.Format{Code: "standard"}
 
 	okDeck := &domain.Deck{Cards: []domain.CardEntry{
 		{Card: domain.Card{Name: "Forest"}, Quantity: 20}, // básica exenta
@@ -88,6 +88,47 @@ func TestMTG_ValidateDeck_Copias(t *testing.T) {
 	}
 	if ve.Details["cards.Sol Ring"] == "" {
 		t.Errorf("detalles = %v, esperaba cards.Sol Ring", ve.Details)
+	}
+}
+
+func TestMTG_ValidateDeck_Singleton(t *testing.T) {
+	spec := MTGSpec{}
+	format := &domain.Format{Code: "commander"}
+
+	okDeck := &domain.Deck{Cards: []domain.CardEntry{
+		{Card: domain.Card{Name: "Forest"}, Quantity: 30}, // básica exenta
+		{Card: domain.Card{Name: "Sol Ring"}, Quantity: 1},
+	}}
+	if err := spec.ValidateDeck(okDeck, format); err != nil {
+		t.Errorf("deck válido rechazado: %v", err)
+	}
+
+	badDeck := &domain.Deck{Cards: []domain.CardEntry{{Card: domain.Card{Name: "Sol Ring"}, Quantity: 2}}}
+	var ve *domain.ValidationError
+	if err := spec.ValidateDeck(badDeck, format); !errors.As(err, &ve) || ve.Details["cards.Sol Ring"] != "max=1_copies" {
+		t.Errorf("esperaba max=1_copies, obtuve %v", err)
+	}
+}
+
+func TestOnePiece_ValidateDeck_CopiasPorNumeroDeCarta(t *testing.T) {
+	spec := OnePieceSpec{}
+	format := &domain.Format{Code: "standard"}
+
+	// Mismo nombre, distinto número: son cartas diferentes.
+	okDeck := &domain.Deck{Cards: []domain.CardEntry{
+		{Card: domain.Card{Name: "Luffy", SerialSet: "OP01-003"}, Quantity: 4},
+		{Card: domain.Card{Name: "Luffy", SerialSet: "OP05-119"}, Quantity: 4},
+	}}
+	if err := spec.ValidateDeck(okDeck, format); err != nil {
+		t.Errorf("deck válido rechazado: %v", err)
+	}
+
+	badDeck := &domain.Deck{Cards: []domain.CardEntry{
+		{Card: domain.Card{Name: "Luffy", SerialSet: "OP01-003"}, Quantity: 5},
+	}}
+	var ve *domain.ValidationError
+	if err := spec.ValidateDeck(badDeck, format); !errors.As(err, &ve) || ve.Details["cards.OP01-003"] != "max=4_copies" {
+		t.Errorf("esperaba max=4_copies, obtuve %v", err)
 	}
 }
 

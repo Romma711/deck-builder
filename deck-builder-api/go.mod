@@ -13,6 +13,7 @@ require (
 	github.com/pressly/goose/v3 v3.29.0
 	github.com/prometheus/client_golang v1.25.0
 	golang.org/x/crypto v0.58.0
+	golang.org/x/text v0.43.0
 	golang.org/x/time v0.16.0
 	gorm.io/datatypes v1.2.7
 	gorm.io/driver/postgres v1.6.3
@@ -61,7 +62,6 @@ require (
 	golang.org/x/net v0.61.0 // indirect
 	golang.org/x/sync v0.24.0 // indirect
 	golang.org/x/sys v0.49.0 // indirect
-	golang.org/x/text v0.43.0 // indirect
 	google.golang.org/protobuf v1.36.12 // indirect
 	gopkg.in/yaml.v3 v3.0.1 // indirect
 	gorm.io/driver/mysql v1.5.6 // indirect

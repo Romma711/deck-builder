@@ -351,7 +351,7 @@ func TestIntegration_DeckRepository_CRUD(t *testing.T) {
 	}
 
 	// Filtro por líder (JOIN contra catálogo, ya no JSONB).
-	byLeader, err := repo.Find(ctx, ports.DeckFilter{LeaderName: "Atraxa"})
+	byLeader, _, err := repo.Find(ctx, ports.DeckFilter{LeaderName: "Atraxa"})
 	if err != nil {
 		t.Fatalf("Find por leader: %v", err)
 	}
@@ -363,19 +363,19 @@ func TestIntegration_DeckRepository_CRUD(t *testing.T) {
 	}
 
 	// Filtro por juego.
-	byGame, err := repo.Find(ctx, ports.DeckFilter{GameCode: "mtg"})
+	byGame, _, err := repo.Find(ctx, ports.DeckFilter{GameCode: "mtg"})
 	if err != nil {
 		t.Fatalf("Find por game: %v", err)
 	}
 	if len(byGame) != 1 {
 		t.Errorf("Find por game devolvió %d, esperaba 1", len(byGame))
 	}
-	if byOther, _ := repo.Find(ctx, ports.DeckFilter{GameCode: "pokemon"}); len(byOther) != 0 {
+	if byOther, _, _ := repo.Find(ctx, ports.DeckFilter{GameCode: "pokemon"}); len(byOther) != 0 {
 		t.Errorf("Find por pokemon devolvió %d, esperaba 0", len(byOther))
 	}
 
 	// Filtro por formato inexistente.
-	none, err := repo.Find(ctx, ports.DeckFilter{Format: "pauper"})
+	none, _, err := repo.Find(ctx, ports.DeckFilter{Format: "pauper"})
 	if err != nil {
 		t.Fatalf("Find: %v", err)
 	}

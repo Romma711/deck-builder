@@ -1,0 +1,812 @@
+openapi: 3.0.3
+info:
+  title: Deck Builder API
+  version: "3.0.0"
+  description: |
+    API multi-TCG (MTG, Pokémon, Yu-Gi-Oh!, One Piece) para construir y
+    compartir mazos, con organizaciones y roles para uso SaaS.
+
+    **Autenticación:** Bearer JWT (access token de `/auth/login` o
+    `/auth/refresh`). Las lecturas de mazos son públicas; con token se
+    agregan los mazos privados propios y los de las organizaciones del
+    usuario (RLS en PostgreSQL).
+
+    **Errores:** todos los errores siguen la forma
+    `{"error": {"code", "message", "details?"}}`.
+servers:
+  - url: http://localhost:8080
+tags:
+  - name: salud
+  - name: auth
+  - name: catálogo
+  - name: decks
+  - name: orgs
+
+paths:
+  /healthz:
+    get:
+      tags: [salud]
+      summary: Liveness (el proceso responde)
+      security: []
+      responses:
+        "200":
+          description: Proceso vivo
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  status: {type: string, example: ok}
+
+  /readyz:
+    get:
+      tags: [salud]
+      summary: Readiness (la base de datos responde)
+      security: []
+      responses:
+        "200":
+          description: Lista para recibir tráfico
+        "503":
+          description: Dependencia (BD) no disponible
+
+  /metrics:
+    get:
+      tags: [salud]
+      summary: Métricas Prometheus (HTTP, Go, proceso)
+      security: []
+      responses:
+        "200":
+          description: Text exposition format (Prometheus)
+          content:
+            text/plain:
+              schema: {type: string}
+
+  /api/v3/auth/register:
+    post:
+      tags: [auth]
+      summary: Registrar usuario
+      security: []
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required: [username, email, password]
+              properties:
+                username: {type: string, minLength: 3, maxLength: 30}
+                email: {type: string, format: email}
+                password: {type: string, minLength: 8, maxLength: 72}
+      responses:
+        "201":
+          description: Usuario creado
+          content:
+            application/json:
+              schema: {$ref: "#/components/schemas/User"}
+        "400": {$ref: "#/components/responses/ValidationError"}
+        "409":
+          description: Username o email ya existen
+          content:
+            application/json:
+              schema: {$ref: "#/components/schemas/Error"}
+        "429": {$ref: "#/components/responses/RateLimited"}
+
+  /api/v3/auth/login:
+    post:
+      tags: [auth]
+      summary: Iniciar sesión (emite access + refresh token)
+      security: []
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required: [username, password]
+              properties:
+                username: {type: string}
+                password: {type: string}
+      responses:
+        "200":
+          description: Par de tokens
+          content:
+            application/json:
+              schema: {$ref: "#/components/schemas/TokenPair"}
+        "400": {$ref: "#/components/responses/ValidationError"}
+        "401":
+          description: Credenciales inválidas
+          content:
+            application/json:
+              schema: {$ref: "#/components/schemas/Error"}
+        "429": {$ref: "#/components/responses/RateLimited"}
+
+  /api/v3/auth/refresh:
+    post:
+      tags: [auth]
+      summary: Rotar refresh token (el anterior queda revocado)
+      description: >
+        La rotación detecta reuso: si un refresh token ya rotado vuelve a
+        usarse, se revoca toda la familia (robo potencial).
+      security: []
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required: [refresh_token]
+              properties:
+                refresh_token: {type: string}
+      responses:
+        "200":
+          description: Par de tokens nuevo
+          content:
+            application/json:
+              schema: {$ref: "#/components/schemas/TokenPair"}
+        "401":
+          description: Token inválido, expirado o reusado
+          content:
+            application/json:
+              schema: {$ref: "#/components/schemas/Error"}
+        "429": {$ref: "#/components/responses/RateLimited"}
+
+  /api/v3/auth/logout:
+    post:
+      tags: [auth]
+      summary: Revocar un refresh token
+      security: []
+      requestBody:
+        required: false
+        content:
+          application/json:
+            schema:
+              type: object
+              properties:
+                refresh_token: {type: string}
+      responses:
+        "204":
+          description: Revocado (idempotente)
+        "429": {$ref: "#/components/responses/RateLimited"}
+
+  /api/v3/me:
+    get:
+      tags: [auth]
+      summary: Perfil del usuario autenticado
+      responses:
+        "200":
+          description: Perfil
+          content:
+            application/json:
+              schema: {$ref: "#/components/schemas/User"}
+        "401": {$ref: "#/components/responses/Unauthorized"}
+    put:
+      tags: [auth]
+      summary: Actualizar perfil (username, email)
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required: [username, email]
+              properties:
+                username: {type: string, minLength: 3, maxLength: 30}
+                email: {type: string, format: email}
+      responses:
+        "200":
+          description: Perfil actualizado
+          content:
+            application/json:
+              schema: {$ref: "#/components/schemas/User"}
+        "400": {$ref: "#/components/responses/ValidationError"}
+        "401": {$ref: "#/components/responses/Unauthorized"}
+        "409":
+          description: Username o email ya existen
+          content:
+            application/json:
+              schema: {$ref: "#/components/schemas/Error"}
+    delete:
+      tags: [auth]
+      summary: "Eliminar la cuenta propia (cascada: tokens, mazos, membresías)"
+      responses:
+        "204":
+          description: Cuenta eliminada
+        "401": {$ref: "#/components/responses/Unauthorized"}
+
+  /api/v3/games:
+    get:
+      tags: [catálogo]
+      summary: Juegos activos con sus formatos
+      security: []
+      responses:
+        "200":
+          description: Lista paginada por total
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  data:
+                    type: array
+                    items: {$ref: "#/components/schemas/Game"}
+                  meta: {$ref: "#/components/schemas/ListMeta"}
+
+  /api/v3/games/{code}:
+    get:
+      tags: [catálogo]
+      summary: Un juego por código (p. ej. mtg, pokemon)
+      security: []
+      parameters:
+        - name: code
+          in: path
+          required: true
+          schema: {type: string, example: mtg}
+      responses:
+        "200":
+          description: Juego
+          content:
+            application/json:
+              schema: {$ref: "#/components/schemas/Game"}
+        "404": {$ref: "#/components/responses/NotFound"}
+
+  /api/v3/cards:
+    get:
+      tags: [catálogo]
+      summary: Catálogo de cartas (filtros combinables)
+      security: []
+      parameters:
+        - {name: game, in: query, schema: {type: string}, description: "Código de juego"}
+        - {name: q, in: query, schema: {type: string}, description: "Búsqueda por nombre (ILIKE)"}
+        - {name: limit, in: query, schema: {type: integer}}
+        - {name: offset, in: query, schema: {type: integer}}
+      responses:
+        "200":
+          description: Lista paginada
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  data:
+                    type: array
+                    items: {$ref: "#/components/schemas/Card"}
+                  meta: {$ref: "#/components/schemas/PagedMeta"}
+
+  /api/v3/cards/{id}:
+    get:
+      tags: [catálogo]
+      summary: Una carta por ID
+      security: []
+      parameters:
+        - name: id
+          in: path
+          required: true
+          schema: {type: string, format: uuid}
+      responses:
+        "200":
+          description: Carta
+          content:
+            application/json:
+              schema: {$ref: "#/components/schemas/Card"}
+        "404": {$ref: "#/components/responses/NotFound"}
+
+  /api/v3/decks:
+    get:
+      tags: [decks]
+      summary: Listar mazos (visibilidad filtrada por RLS)
+      description: >
+        Sin token: solo mazos públicos. Con token (opcional): además los
+        privados propios y los de las organizaciones del usuario.
+      security: []
+      parameters:
+        - {name: game, in: query, schema: {type: string}}
+        - {name: owner, in: query, schema: {type: string, format: uuid}}
+        - {name: org, in: query, schema: {type: string, format: uuid}}
+        - {name: format, in: query, schema: {type: string}}
+        - {name: leader, in: query, schema: {type: string}, description: "Subcadena del nombre del líder (ILIKE)"}
+        - {name: author, in: query, schema: {type: string}, description: "Subcadena del username del dueño (ILIKE)"}
+        - {name: limit, in: query, schema: {type: integer, minimum: 1, maximum: 100, default: 50}}
+        - {name: offset, in: query, schema: {type: integer, minimum: 0, default: 0}}
+        - name: Authorization
+          in: header
+          required: false
+          schema: {type: string, example: "Bearer <access_token>"}
+      responses:
+        "200":
+          description: Lista de mazos visibles
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  data:
+                    type: array
+                    items: {$ref: "#/components/schemas/Deck"}
+                  meta: {$ref: "#/components/schemas/PagedMeta"}
+    post:
+      tags: [decks]
+      summary: Crear mazo (personal u org; validado por GameSpec del juego)
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema: {$ref: "#/components/schemas/DeckInput"}
+      responses:
+        "201":
+          description: Mazo creado
+          content:
+            application/json:
+              schema: {$ref: "#/components/schemas/Deck"}
+        "400": {$ref: "#/components/responses/ValidationError"}
+        "401": {$ref: "#/components/responses/Unauthorized"}
+        "403":
+          description: No es miembro de la org indicada
+          content:
+            application/json:
+              schema: {$ref: "#/components/schemas/Error"}
+
+  /api/v3/decks/{id}:
+    get:
+      tags: [decks]
+      summary: Detalle de mazo (privado ajeno → 404, sin filtrar existencia)
+      security: []
+      parameters:
+        - name: id
+          in: path
+          required: true
+          schema: {type: string, format: uuid}
+        - name: Authorization
+          in: header
+          required: false
+          schema: {type: string, example: "Bearer <access_token>"}
+      responses:
+        "200":
+          description: Mazo
+          content:
+            application/json:
+              schema: {$ref: "#/components/schemas/Deck"}
+        "404": {$ref: "#/components/responses/NotFound"}
+    put:
+      tags: [decks]
+      summary: Reemplazar mazo (solo el dueño)
+      parameters:
+        - name: id
+          in: path
+          required: true
+          schema: {type: string, format: uuid}
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema: {$ref: "#/components/schemas/DeckInput"}
+      responses:
+        "200":
+          description: Mazo actualizado
+          content:
+            application/json:
+              schema: {$ref: "#/components/schemas/Deck"}
+        "400": {$ref: "#/components/responses/ValidationError"}
+        "401": {$ref: "#/components/responses/Unauthorized"}
+        "404": {$ref: "#/components/responses/NotFound"}
+    delete:
+      tags: [decks]
+      summary: Eliminar mazo (solo el dueño)
+      parameters:
+        - name: id
+          in: path
+          required: true
+          schema: {type: string, format: uuid}
+      responses:
+        "204":
+          description: Eliminado
+        "401": {$ref: "#/components/responses/Unauthorized"}
+        "404": {$ref: "#/components/responses/NotFound"}
+
+  /api/v3/orgs:
+    get:
+      tags: [orgs]
+      summary: Organizaciones del usuario con su rol
+      responses:
+        "200":
+          description: Lista
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  data:
+                    type: array
+                    items: {$ref: "#/components/schemas/Organization"}
+                  meta: {$ref: "#/components/schemas/ListMeta"}
+        "401": {$ref: "#/components/responses/Unauthorized"}
+    post:
+      tags: [orgs]
+      summary: Crear organización (el creador queda como owner)
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required: [name]
+              properties:
+                name: {type: string, minLength: 2, maxLength: 100}
+                slug: {type: string, minLength: 2, maxLength: 50}
+      responses:
+        "201":
+          description: Organización creada (role=owner)
+          content:
+            application/json:
+              schema: {$ref: "#/components/schemas/Organization"}
+        "400": {$ref: "#/components/responses/ValidationError"}
+        "401": {$ref: "#/components/responses/Unauthorized"}
+        "409":
+          description: Slug ya en uso
+          content:
+            application/json:
+              schema: {$ref: "#/components/schemas/Error"}
+
+  /api/v3/orgs/{orgId}:
+    get:
+      tags: [orgs]
+      summary: "Detalle (rol mínimo: member)"
+      parameters: [{$ref: "#/components/parameters/orgId"}]
+      responses:
+        "200":
+          description: Organización
+          content:
+            application/json:
+              schema: {$ref: "#/components/schemas/Organization"}
+        "401": {$ref: "#/components/responses/Unauthorized"}
+        "403": {$ref: "#/components/responses/Forbidden"}
+        "404": {$ref: "#/components/responses/NotFound"}
+    patch:
+      tags: [orgs]
+      summary: "Renombrar (rol mínimo: owner)"
+      parameters: [{$ref: "#/components/parameters/orgId"}]
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required: [name]
+              properties:
+                name: {type: string, minLength: 2, maxLength: 100}
+                slug: {type: string, minLength: 2, maxLength: 50}
+      responses:
+        "200":
+          description: Actualizada
+          content:
+            application/json:
+              schema: {$ref: "#/components/schemas/Organization"}
+        "401": {$ref: "#/components/responses/Unauthorized"}
+        "403": {$ref: "#/components/responses/Forbidden"}
+        "404": {$ref: "#/components/responses/NotFound"}
+    delete:
+      tags: [orgs]
+      summary: "Eliminar org (rol mínimo: owner; mazos quedan personales)"
+      parameters: [{$ref: "#/components/parameters/orgId"}]
+      responses:
+        "204":
+          description: Eliminada
+        "401": {$ref: "#/components/responses/Unauthorized"}
+        "403": {$ref: "#/components/responses/Forbidden"}
+        "404": {$ref: "#/components/responses/NotFound"}
+
+  /api/v3/orgs/{orgId}/members:
+    get:
+      tags: [orgs]
+      summary: "Listar miembros (rol mínimo: member)"
+      parameters: [{$ref: "#/components/parameters/orgId"}]
+      responses:
+        "200":
+          description: Miembros
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  data:
+                    type: array
+                    items: {$ref: "#/components/schemas/Member"}
+                  meta: {$ref: "#/components/schemas/ListMeta"}
+        "401": {$ref: "#/components/responses/Unauthorized"}
+        "403": {$ref: "#/components/responses/Forbidden"}
+    post:
+      tags: [orgs]
+      summary: "Agregar miembro (rol mínimo: admin; asignar owner solo puede un owner)"
+      parameters: [{$ref: "#/components/parameters/orgId"}]
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required: [user]
+              properties:
+                user: {type: string, description: "Username"}
+                role: {type: string, enum: [member, admin, owner]}
+      responses:
+        "201":
+          description: Miembro agregado
+          content:
+            application/json:
+              schema: {$ref: "#/components/schemas/Member"}
+        "400": {$ref: "#/components/responses/ValidationError"}
+        "401": {$ref: "#/components/responses/Unauthorized"}
+        "403":
+          description: Rol insuficiente o intento de asignar rol superior al propio
+          content:
+            application/json:
+              schema: {$ref: "#/components/schemas/Error"}
+        "404": {$ref: "#/components/responses/NotFound"}
+        "409":
+          description: Ya es miembro
+          content:
+            application/json:
+              schema: {$ref: "#/components/schemas/Error"}
+
+  /api/v3/orgs/{orgId}/members/{userId}:
+    patch:
+      tags: [orgs]
+      summary: Cambiar rol (solo owner; nunca se rebaja el último owner)
+      parameters:
+        - {$ref: "#/components/parameters/orgId"}
+        - name: userId
+          in: path
+          required: true
+          schema: {type: string, format: uuid}
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required: [role]
+              properties:
+                role: {type: string, enum: [member, admin, owner]}
+      responses:
+        "204":
+          description: Rol cambiado
+        "400": {$ref: "#/components/responses/ValidationError"}
+        "401": {$ref: "#/components/responses/Unauthorized"}
+        "403": {$ref: "#/components/responses/Forbidden"}
+        "404": {$ref: "#/components/responses/NotFound"}
+        "409":
+          description: Se intentó dejar la org sin owners
+          content:
+            application/json:
+              schema: {$ref: "#/components/schemas/Error"}
+    delete:
+      tags: [orgs]
+      summary: Quitar miembro (admin+ puede quitar a otros; cualquiera se auto-saca)
+      parameters:
+        - {$ref: "#/components/parameters/orgId"}
+        - name: userId
+          in: path
+          required: true
+          schema: {type: string, format: uuid}
+      responses:
+        "204":
+          description: Miembro removido
+        "401": {$ref: "#/components/responses/Unauthorized"}
+        "403": {$ref: "#/components/responses/Forbidden"}
+        "404": {$ref: "#/components/responses/NotFound"}
+        "409":
+          description: Se intentó quitar el último owner
+          content:
+            application/json:
+              schema: {$ref: "#/components/schemas/Error"}
+
+components:
+  securitySchemes:
+    bearerAuth:
+      type: http
+      scheme: bearer
+      bearerFormat: JWT
+
+  parameters:
+    orgId:
+      name: orgId
+      in: path
+      required: true
+      schema: {type: string, format: uuid}
+
+  responses:
+    NotFound:
+      description: Recurso inexistente (o privado ajeno, sin filtrar existencia)
+      content:
+        application/json:
+          schema: {$ref: "#/components/schemas/Error"}
+    Unauthorized:
+      description: Sin token o token inválido/expirado
+      content:
+        application/json:
+          schema: {$ref: "#/components/schemas/Error"}
+    Forbidden:
+      description: Autenticado pero sin permiso (rol insuficiente)
+      content:
+        application/json:
+          schema: {$ref: "#/components/schemas/Error"}
+    ValidationError:
+      description: Validación fallida (400, con detalle por campo en details)
+      content:
+        application/json:
+          schema: {$ref: "#/components/schemas/Error"}
+    RateLimited:
+      description: Límite de peticiones excedido (ver header Retry-After)
+      content:
+        application/json:
+          schema: {$ref: "#/components/schemas/Error"}
+
+  schemas:
+    Error:
+      type: object
+      required: [error]
+      properties:
+        error:
+          type: object
+          required: [code, message]
+          properties:
+            code:
+              type: string
+              enum: [NOT_FOUND, UNAUTHORIZED, FORBIDDEN, INVALID_ID, CONFLICT,
+                     VALIDATION_ERROR, RATE_LIMITED, INTERNAL]
+            message: {type: string}
+            details:
+              type: object
+              additionalProperties: {type: string}
+
+    ListMeta:
+      type: object
+      properties:
+        total: {type: integer}
+
+    PagedMeta:
+      type: object
+      properties:
+        total: {type: integer}
+        limit: {type: integer}
+        offset: {type: integer}
+
+    User:
+      type: object
+      properties:
+        id: {type: string, format: uuid}
+        username: {type: string}
+        email: {type: string, format: email}
+        created_at: {type: string, format: date-time}
+        updated_at: {type: string, format: date-time}
+
+    TokenPair:
+      type: object
+      properties:
+        access_token: {type: string, description: JWT Bearer (corto plazo)}
+        refresh_token: {type: string, description: Opaco, rotatorio}
+        token_type: {type: string, example: Bearer}
+        expires_in: {type: integer, description: "Segundos hasta expirar del access token"}
+
+    Format:
+      type: object
+      properties:
+        code: {type: string, example: standard}
+        name: {type: string}
+        deck_size: {type: integer, example: 60}
+        min_size: {type: integer}
+        max_size: {type: integer}
+        requires_leader: {type: boolean}
+
+    Game:
+      type: object
+      properties:
+        code: {type: string, example: mtg}
+        name: {type: string, example: "Magic: The Gathering"}
+        formats:
+          type: array
+          items: {$ref: "#/components/schemas/Format"}
+
+    Card:
+      type: object
+      description: Carta del catálogo. Los atributos específicos del juego viven en attributes.
+      properties:
+        id: {type: string, format: uuid}
+        game: {type: string, example: mtg}
+        name: {type: string, example: Lightning Bolt}
+        serial_set: {type: string, example: "LEB-161"}
+        image: {type: string, format: uri}
+        attributes:
+          type: object
+          additionalProperties: true
+          example: {mana_cost: "{R}", mana_value: 1, type: Instant}
+
+    CardInput:
+      type: object
+      required: [name, serial_set, image, attributes]
+      properties:
+        name: {type: string, minLength: 1, maxLength: 100}
+        serial_set: {type: string, minLength: 1, maxLength: 50}
+        image: {type: string, format: uri}
+        attributes:
+          type: object
+          additionalProperties: true
+          description: Validado por el GameSpec del juego del mazo
+
+    CardEntryInput:
+      type: object
+      required: [card, quantity]
+      properties:
+        card: {$ref: "#/components/schemas/CardInput"}
+        quantity: {type: integer, minimum: 1, maximum: 99}
+
+    DeckInput:
+      type: object
+      required: [name, deck_size, game, format, cards]
+      properties:
+        name: {type: string, minLength: 3, maxLength: 50}
+        description: {type: string, maxLength: 300}
+        deck_size: {type: integer, minimum: 1, maximum: 400, description: "Debe coincidir con las cartas enviadas (más líder/partner si el juego los cuenta)"}
+        game: {type: string, example: onepiece}
+        format: {type: string, example: starter_deck}
+        org_id: {type: string, format: uuid, description: "Vacío = mazo personal"}
+        private: {type: boolean, description: "Solo el dueño y miembros de su org lo ven"}
+        leader: {$ref: "#/components/schemas/CardInput"}
+        partner: {$ref: "#/components/schemas/CardInput"}
+        cards:
+          type: array
+          minItems: 1
+          items: {$ref: "#/components/schemas/CardEntryInput"}
+
+    CardEntry:
+      type: object
+      properties:
+        card: {$ref: "#/components/schemas/Card"}
+        quantity: {type: integer}
+
+    Deck:
+      type: object
+      properties:
+        id: {type: string, format: uuid}
+        owner_id: {type: string, format: uuid}
+        owner_username: {type: string}
+        org_id: {type: string, format: uuid, description: "Ausente/vacío = personal"}
+        private: {type: boolean}
+        name: {type: string}
+        description: {type: string}
+        deck_size: {type: integer}
+        game: {type: string}
+        format: {type: string}
+        leader: {$ref: "#/components/schemas/Card"}
+        partner: {$ref: "#/components/schemas/Card"}
+        cards:
+          type: array
+          items: {$ref: "#/components/schemas/CardEntry"}
+        created_at: {type: string, format: date-time}
+        updated_at: {type: string, format: date-time}
+
+    Role:
+      type: string
+      enum: [owner, admin, member]
+      description: Jerarquía owner > admin > member (fail-closed ante rol desconocido)
+
+    Organization:
+      type: object
+      properties:
+        id: {type: string, format: uuid}
+        slug: {type: string}
+        name: {type: string}
+        role: {$ref: "#/components/schemas/Role"}
+        created_at: {type: string, format: date-time}
+        updated_at: {type: string, format: date-time}
+
+    Member:
+      type: object
+      properties:
+        user_id: {type: string, format: uuid}
+        username: {type: string}
+        email: {type: string, format: email}
+        role: {$ref: "#/components/schemas/Role"}
+        joined_at: {type: string, format: date-time}
+
+security:
+  - bearerAuth: []

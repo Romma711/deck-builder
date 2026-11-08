@@ -18,9 +18,11 @@ import (
 	"regexp"
 	"strings"
 	"time"
+	"unicode"
 
 	"github.com/Romma711/deck-builder/internal/domain"
 	"github.com/Romma711/deck-builder/internal/ports"
+	"golang.org/x/text/unicode/norm"
 )
 
 // slugPattern define un slug URL-amigable: minúsculas, dígitos y guiones.
@@ -295,10 +297,21 @@ func (s *Service) requireRole(ctx context.Context, orgID, userID string, min dom
 }
 
 // slugify deriva un slug URL-amigable del nombre (para la creación sin slug).
+// stripAccents quita los diacríticos ("Ñandú" → "Nandu").
+func stripAccents(s string) string {
+	var b strings.Builder
+	for _, r := range norm.NFD.String(s) {
+		if !unicode.Is(unicode.Mn, r) {
+			b.WriteRune(r)
+		}
+	}
+	return b.String()
+}
+
 func slugify(name string) string {
 	var b strings.Builder
 	prevDash := false
-	for _, r := range strings.ToLower(name) {
+	for _, r := range strings.ToLower(stripAccents(name)) {
 		isAlnum := (r >= 'a' && r <= 'z') || (r >= '0' && r <= '9')
 		if isAlnum {
 			b.WriteRune(r)
