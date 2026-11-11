@@ -1,0 +1,108 @@
+# Stack de producción: Caddy (HTTPS) → web (Astro SSR) y api (Go) → db (Postgres).
+#
+#   Internet ──443──▶ caddy ──/api/*──▶ api ──▶ db
+#                          └──resto───▶ web ──(SSR, red interna)──▶ api
+#
+# Uso (ver README.md):
+#   cp .env.example .env    # completar secretos y dominio
+#   docker compose -f docker-compose.prod.yml up -d --build
+name: deck-builder-prod
+
+services:
+  db:
+    image: postgres:18-alpine
+    restart: unless-stopped
+    environment:
+      POSTGRES_USER: postgres
+      POSTGRES_PASSWORD: ${POSTGRES_PASSWORD:?definí POSTGRES_PASSWORD en .env}
+      # Lo usa postgres-init.sh para crear el rol de la app (no superusuario: RLS).
+      APP_DB_PASSWORD: ${APP_DB_PASSWORD:?definí APP_DB_PASSWORD en .env}
+    volumes:
+      - pgdata:/var/lib/postgresql
+      - ./postgres-init.sh:/docker-entrypoint-initdb.d/init.sh:ro
+    # Sin `ports`: la base solo es alcanzable desde la red interna.
+    networks: [data]
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U postgres"]
+      interval: 5s
+      timeout: 3s
+      retries: 12
+
+  api:
+    build: ../deck-builder-api
+    restart: unless-stopped
+    depends_on:
+      db:
+        condition: service_healthy
+    environment:
+      APP_ENV: production
+      PORT: "8080"
+      DATABASE_URL: postgres://deckbuilder:${APP_DB_PASSWORD}@db:5432/deckbuilder?sslmode=disable
+      SECRET_SIGNING_KEY: ${SECRET_SIGNING_KEY:?definí SECRET_SIGNING_KEY en .env}
+      # Mismo origen detrás de Caddy: no hace falta CORS.
+      CORS_ALLOWED_ORIGINS: ""
+      # Solo Caddy y el SSR (IPs fijas en edge) pueden informar la IP real del
+      # visitante vía X-Forwarded-For. No se confía en toda la subred: incluye
+      # el gateway de Docker.
+      TRUSTED_PROXIES: ${CADDY_IP:-172.30.0.10},${WEB_IP:-172.30.0.11}
+      RATE_LIMIT_RPS: ${RATE_LIMIT_RPS:-20}
+      RATE_LIMIT_BURST: ${RATE_LIMIT_BURST:-40}
+      RATE_LIMIT_AUTH_RPS: ${RATE_LIMIT_AUTH_RPS:-5}
+      RATE_LIMIT_AUTH_BURST: ${RATE_LIMIT_AUTH_BURST:-10}
+    networks: [edge, data]
+    healthcheck:
+      test: ["CMD-SHELL", "wget -qO- http://localhost:8080/readyz >/dev/null 2>&1"]
+      interval: 10s
+      timeout: 3s
+      retries: 5
+
+  web:
+    build:
+      context: ${WEB_CONTEXT:-../../deck-builder-front}
+      args:
+        PUBLIC_SITE_URL: ${SITE_URL:?definí SITE_URL en .env}
+    restart: unless-stopped
+    depends_on:
+      api:
+        condition: service_healthy
+    environment:
+      # El SSR le habla a la API por la red interna, sin pasar por internet.
+      API_INTERNAL_URL: http://api:8080
+    networks:
+      edge:
+        ipv4_address: ${WEB_IP:-172.30.0.11}
+
+  caddy:
+    image: caddy:2-alpine
+    restart: unless-stopped
+    depends_on: [web, api]
+    ports:
+      - "${HTTP_PORT:-80}:80"
+      - "${HTTPS_PORT:-443}:443"
+      - "${HTTPS_PORT:-443}:443/udp" # HTTP/3
+    environment:
+      DOMAIN: ${DOMAIN:?definí DOMAIN en .env}
+    volumes:
+      - ./Caddyfile:/etc/caddy/Caddyfile:ro
+      # Certificados y claves de Let's Encrypt: perderlos obliga a reemitir.
+      - caddy_data:/data
+      - caddy_config:/config
+    networks:
+      edge:
+        ipv4_address: ${CADDY_IP:-172.30.0.10}
+
+networks:
+  # Red pública interna: caddy, web y api. Subred fija para asignar las IPs
+  # de los proxies de confianza (CADDY_IP, WEB_IP).
+  edge:
+    ipam:
+      config:
+        - subnet: ${EDGE_SUBNET:-172.30.0.0/24}
+  # Red de datos: solo api y db. `internal`: sin salida a internet.
+  data:
+    internal: true
+
+volumes:
+  pgdata:
+  caddy_data:
+  caddy_config:
