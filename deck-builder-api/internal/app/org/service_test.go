@@ -5,6 +5,7 @@ import (
 	"errors"
 	"fmt"
 	"testing"
+	"time"
 
 	"github.com/Romma711/deck-builder/internal/domain"
 	"github.com/Romma711/deck-builder/internal/ports"
@@ -81,10 +82,82 @@ func (f *fakeMembershipRepo) ListMembersByOrg(_ context.Context, orgID string) (
 	var out []ports.MemberInfo
 	for _, m := range f.byKey {
 		if m.OrgID == orgID {
-			out = append(out, ports.MemberInfo{UserID: m.UserID, Role: m.Role, JoinedAt: m.CreatedAt})
+			out = append(out, ports.MemberInfo{
+				UserID: m.UserID, Username: "u-" + m.UserID[:4], Email: m.UserID[:4] + "@example.com",
+				Role: m.Role, JoinedAt: m.CreatedAt,
+			})
 		}
 	}
 	return out, nil
+}
+
+// fakeInvitationRepo implementa ports.InvitationRepository en memoria.
+type fakeInvitationRepo struct {
+	byHash  map[string]*fakeInvitation
+	members *fakeMembershipRepo
+	nextID  int
+}
+
+type fakeInvitation struct {
+	inv     domain.Invitation
+	used    bool
+	revoked bool
+}
+
+func newFakeInvitationRepo(members *fakeMembershipRepo) *fakeInvitationRepo {
+	return &fakeInvitationRepo{byHash: map[string]*fakeInvitation{}, members: members}
+}
+
+func (f *fakeInvitationRepo) active(i *fakeInvitation, now time.Time) bool {
+	return !i.used && !i.revoked && i.inv.ExpiresAt.After(now)
+}
+
+func (f *fakeInvitationRepo) Create(_ context.Context, inv *domain.Invitation, tokenHash string) error {
+	f.nextID++
+	inv.ID = fmt.Sprintf("inv-%d", f.nextID)
+	f.byHash[tokenHash] = &fakeInvitation{inv: *inv}
+	return nil
+}
+
+func (f *fakeInvitationRepo) ListActiveByOrg(_ context.Context, orgID string, now time.Time) ([]domain.Invitation, error) {
+	var out []domain.Invitation
+	for _, i := range f.byHash {
+		if i.inv.OrgID == orgID && f.active(i, now) {
+			out = append(out, i.inv)
+		}
+	}
+	return out, nil
+}
+
+func (f *fakeInvitationRepo) FindActiveByTokenHash(_ context.Context, tokenHash string, now time.Time) (*domain.Invitation, error) {
+	if i, ok := f.byHash[tokenHash]; ok && f.active(i, now) {
+		inv := i.inv
+		return &inv, nil
+	}
+	return nil, domain.ErrNotFound
+}
+
+func (f *fakeInvitationRepo) Revoke(_ context.Context, orgID, id string, now time.Time) error {
+	for _, i := range f.byHash {
+		if i.inv.ID == id && i.inv.OrgID == orgID && f.active(i, now) {
+			i.revoked = true
+			return nil
+		}
+	}
+	return domain.ErrNotFound
+}
+
+func (f *fakeInvitationRepo) Accept(ctx context.Context, tokenHash, userID string, now time.Time) (*domain.Invitation, error) {
+	i, ok := f.byHash[tokenHash]
+	if !ok || !f.active(i, now) {
+		return nil, domain.ErrNotFound
+	}
+	if err := f.members.Add(ctx, &domain.Membership{OrgID: i.inv.OrgID, UserID: userID, Role: i.inv.Role}); err != nil {
+		return nil, err
+	}
+	i.used = true
+	inv := i.inv
+	return &inv, nil
 }
 
 // fakeOrgRepo implementa ports.OrganizationRepository. Create replica el
@@ -242,7 +315,7 @@ func newHarness(t *testing.T) (*Service, *fakeOrgRepo, *fakeMembershipRepo, stri
 		&domain.User{ID: userMember, Username: "member", Email: "member@x.dev"},
 		&domain.User{ID: userOutsider, Username: "outsider", Email: "out@x.dev"},
 	)
-	svc := NewService(orgRepo, members, users)
+	svc := NewService(orgRepo, members, users, newFakeInvitationRepo(members))
 
 	org, err := svc.Create(context.Background(), userOwner, CreateInput{Name: "Tienda Beta"})
 	if err != nil {
@@ -265,7 +338,7 @@ func newHarness(t *testing.T) (*Service, *fakeOrgRepo, *fakeMembershipRepo, stri
 
 func TestCreate_GeneraSlugYOwner(t *testing.T) {
 	members := newFakeMembershipRepo()
-	svc := NewService(newFakeOrgRepo(members), members, newFakeUserRepo())
+	svc := NewService(newFakeOrgRepo(members), members, newFakeUserRepo(), newFakeInvitationRepo(members))
 
 	org, err := svc.Create(context.Background(), userOwner, CreateInput{Name: "Mi Tienda Gaming"})
 	if err != nil {
@@ -288,7 +361,7 @@ func TestCreate_GeneraSlugYOwner(t *testing.T) {
 
 func TestCreate_NombreCorto_Validation(t *testing.T) {
 	members := newFakeMembershipRepo()
-	svc := NewService(newFakeOrgRepo(members), members, newFakeUserRepo())
+	svc := NewService(newFakeOrgRepo(members), members, newFakeUserRepo(), newFakeInvitationRepo(members))
 
 	_, err := svc.Create(context.Background(), userOwner, CreateInput{Name: "a"})
 	if !errors.Is(err, domain.ErrValidation) {
@@ -298,7 +371,7 @@ func TestCreate_NombreCorto_Validation(t *testing.T) {
 
 func TestCreate_SlugConMayusculas_Validation(t *testing.T) {
 	members := newFakeMembershipRepo()
-	svc := NewService(newFakeOrgRepo(members), members, newFakeUserRepo())
+	svc := NewService(newFakeOrgRepo(members), members, newFakeUserRepo(), newFakeInvitationRepo(members))
 
 	_, err := svc.Create(context.Background(), userOwner, CreateInput{Name: "Tienda X", Slug: "Tienda X!"})
 	if !errors.Is(err, domain.ErrValidation) {
@@ -308,7 +381,7 @@ func TestCreate_SlugConMayusculas_Validation(t *testing.T) {
 
 func TestCreate_SlugDuplicado_Conflict(t *testing.T) {
 	members := newFakeMembershipRepo()
-	svc := NewService(newFakeOrgRepo(members), members, newFakeUserRepo())
+	svc := NewService(newFakeOrgRepo(members), members, newFakeUserRepo(), newFakeInvitationRepo(members))
 
 	if _, err := svc.Create(context.Background(), userOwner, CreateInput{Name: "Otra", Slug: "tienda"}); err != nil {
 		t.Fatalf("primera Create falló: %v", err)
@@ -605,6 +678,111 @@ func TestListMembers_RequiereMembresia(t *testing.T) {
 	}
 	if len(members) != 3 {
 		t.Errorf("cantidad = %d, esperaba 3 (owner, admin, member)", len(members))
+	}
+}
+
+func TestListMembers_EmailsSoloParaAdmins(t *testing.T) {
+	svc, _, _, orgID := newHarness(t)
+
+	asMember, err := svc.ListMembers(context.Background(), orgID, userMember)
+	if err != nil {
+		t.Fatalf("ListMembers (member) falló: %v", err)
+	}
+	for _, m := range asMember {
+		if m.UserID == userMember && m.Email == "" {
+			t.Error("un member debe ver su propio email")
+		}
+		if m.UserID != userMember && m.Email != "" {
+			t.Errorf("un member no debe ver el email de %s", m.Username)
+		}
+	}
+
+	asAdmin, err := svc.ListMembers(context.Background(), orgID, userAdmin)
+	if err != nil {
+		t.Fatalf("ListMembers (admin) falló: %v", err)
+	}
+	for _, m := range asAdmin {
+		if m.Email == "" {
+			t.Errorf("un admin debe ver el email de %s", m.Username)
+		}
+	}
+}
+
+// --- Invitaciones ---
+
+func TestInvitation_FlujoCompleto(t *testing.T) {
+	svc, _, _, orgID := newHarness(t)
+	ctx := context.Background()
+
+	inv, token, err := svc.CreateInvitation(ctx, orgID, userAdmin, "")
+	if err != nil {
+		t.Fatalf("CreateInvitation: %v", err)
+	}
+	if inv.Role != domain.RoleMember || len(token) < 40 {
+		t.Fatalf("rol = %s, token de %d caracteres", inv.Role, len(token))
+	}
+	if _, err := svc.PreviewInvitation(ctx, token); err != nil {
+		t.Fatalf("PreviewInvitation: %v", err)
+	}
+
+	org, err := svc.AcceptInvitation(ctx, token, userOutsider)
+	if err != nil {
+		t.Fatalf("AcceptInvitation: %v", err)
+	}
+	if org.ID != orgID || org.Role != domain.RoleMember {
+		t.Errorf("org = %s con rol %s", org.ID, org.Role)
+	}
+
+	// Un solo uso: el link ya no sirve.
+	if _, err := svc.PreviewInvitation(ctx, token); !errors.Is(err, domain.ErrNotFound) {
+		t.Errorf("preview tras usar: err = %v, esperaba ErrNotFound", err)
+	}
+}
+
+func TestInvitation_ReglasDeRol(t *testing.T) {
+	svc, _, _, orgID := newHarness(t)
+	ctx := context.Background()
+
+	if _, _, err := svc.CreateInvitation(ctx, orgID, userMember, domain.RoleMember); !errors.Is(err, domain.ErrForbidden) {
+		t.Errorf("member invitando: err = %v, esperaba ErrForbidden", err)
+	}
+	if _, _, err := svc.CreateInvitation(ctx, orgID, userAdmin, domain.RoleAdmin); !errors.Is(err, domain.ErrForbidden) {
+		t.Errorf("admin invitando como admin: err = %v, esperaba ErrForbidden", err)
+	}
+	if _, _, err := svc.CreateInvitation(ctx, orgID, userOwner, domain.RoleAdmin); err != nil {
+		t.Errorf("owner invitando como admin: %v", err)
+	}
+}
+
+func TestInvitation_YaMiembroNoConsumeElLink(t *testing.T) {
+	svc, _, _, orgID := newHarness(t)
+	ctx := context.Background()
+
+	_, token, _ := svc.CreateInvitation(ctx, orgID, userOwner, domain.RoleMember)
+	if _, err := svc.AcceptInvitation(ctx, token, userMember); !errors.Is(err, domain.ErrConflict) {
+		t.Fatalf("err = %v, esperaba ErrConflict", err)
+	}
+	if _, err := svc.PreviewInvitation(ctx, token); err != nil {
+		t.Errorf("el link debe seguir activo: %v", err)
+	}
+}
+
+func TestInvitation_VencidaYRevocada(t *testing.T) {
+	svc, _, _, orgID := newHarness(t)
+	ctx := context.Background()
+
+	inv, token, _ := svc.CreateInvitation(ctx, orgID, userOwner, domain.RoleMember)
+	if err := svc.RevokeInvitation(ctx, orgID, userOwner, inv.ID); err != nil {
+		t.Fatalf("RevokeInvitation: %v", err)
+	}
+	if _, err := svc.AcceptInvitation(ctx, token, userOutsider); !errors.Is(err, domain.ErrNotFound) {
+		t.Errorf("aceptar revocada: err = %v, esperaba ErrNotFound", err)
+	}
+
+	_, token2, _ := svc.CreateInvitation(ctx, orgID, userOwner, domain.RoleMember)
+	svc.now = func() time.Time { return time.Now().UTC().Add(domain.InvitationTTL + time.Hour) }
+	if _, err := svc.AcceptInvitation(ctx, token2, userOutsider); !errors.Is(err, domain.ErrNotFound) {
+		t.Errorf("aceptar vencida: err = %v, esperaba ErrNotFound", err)
 	}
 }
 

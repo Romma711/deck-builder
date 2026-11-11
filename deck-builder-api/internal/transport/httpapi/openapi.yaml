@@ -599,6 +599,100 @@ paths:
             application/json:
               schema: {$ref: "#/components/schemas/Error"}
 
+  /api/v3/orgs/{orgId}/invitations:
+    get:
+      tags: [orgs]
+      summary: "Invitaciones activas (rol mínimo: admin)"
+      parameters: [{$ref: "#/components/parameters/orgId"}]
+      responses:
+        "200":
+          description: Invitaciones no usadas, no revocadas y vigentes
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  data:
+                    type: array
+                    items: {$ref: "#/components/schemas/Invitation"}
+                  meta: {$ref: "#/components/schemas/ListMeta"}
+        "401": {$ref: "#/components/responses/Unauthorized"}
+        "403": {$ref: "#/components/responses/Forbidden"}
+    post:
+      tags: [orgs]
+      summary: "Crear link de invitación (admin+; admin y owner solo los otorga un owner)"
+      parameters: [{$ref: "#/components/parameters/orgId"}]
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              properties:
+                role: {type: string, enum: [member, admin, owner], default: member}
+      responses:
+        "201":
+          description: Invitación creada. `token` solo se devuelve acá (de un solo uso, vence en 7 días)
+          content:
+            application/json:
+              schema: {$ref: "#/components/schemas/Invitation"}
+        "400": {$ref: "#/components/responses/ValidationError"}
+        "401": {$ref: "#/components/responses/Unauthorized"}
+        "403": {$ref: "#/components/responses/Forbidden"}
+
+  /api/v3/orgs/{orgId}/invitations/{invitationId}:
+    delete:
+      tags: [orgs]
+      summary: "Revocar invitación (rol mínimo: admin)"
+      parameters:
+        - {$ref: "#/components/parameters/orgId"}
+        - {name: invitationId, in: path, required: true, schema: {type: string, format: uuid}}
+      responses:
+        "204":
+          description: Revocada
+        "401": {$ref: "#/components/responses/Unauthorized"}
+        "403": {$ref: "#/components/responses/Forbidden"}
+        "404": {$ref: "#/components/responses/NotFound"}
+
+  /api/v3/invitations/{token}:
+    get:
+      tags: [orgs]
+      summary: Vista previa de una invitación (pública; el token es el secreto)
+      security: []
+      parameters:
+        - {name: token, in: path, required: true, schema: {type: string}}
+      responses:
+        "200":
+          description: Invitación activa
+          content:
+            application/json:
+              schema: {$ref: "#/components/schemas/InvitationPreview"}
+        "404": {$ref: "#/components/responses/NotFound"}
+
+  /api/v3/invitations/{token}/accept:
+    post:
+      tags: [orgs]
+      summary: Aceptar invitación (suma al usuario con el rol invitado y consume el link)
+      parameters:
+        - {name: token, in: path, required: true, schema: {type: string}}
+      responses:
+        "200":
+          description: Organización a la que se sumó, con su rol
+          content:
+            application/json:
+              schema: {$ref: "#/components/schemas/Organization"}
+        "401": {$ref: "#/components/responses/Unauthorized"}
+        "404":
+          description: Invitación inexistente, usada, revocada o vencida
+          content:
+            application/json:
+              schema: {$ref: "#/components/schemas/Error"}
+        "409":
+          description: Ya es miembro (la invitación no se consume)
+          content:
+            application/json:
+              schema: {$ref: "#/components/schemas/Error"}
+
 components:
   securitySchemes:
     bearerAuth:
@@ -656,6 +750,11 @@ components:
             message: {type: string}
             details:
               type: object
+              description: >
+                Campo → código de validación. Las claves usan los nombres
+                del JSON (`deck_size`, `cards[0].quantity`, `cards.<Nombre>`)
+                y los valores son códigos (`required`, `min`, `max=4_copies`,
+                `format_range=[60,60]`, `mismatch_cards=58`...).
               additionalProperties: {type: string}
 
     ListMeta:
@@ -804,9 +903,29 @@ components:
       properties:
         user_id: {type: string, format: uuid}
         username: {type: string}
-        email: {type: string, format: email}
+        email: {type: string, format: email, description: "Solo para admin y owner (y el propio)"}
         role: {$ref: "#/components/schemas/Role"}
         joined_at: {type: string, format: date-time}
+
+    Invitation:
+      type: object
+      properties:
+        id: {type: string, format: uuid}
+        role: {$ref: "#/components/schemas/Role"}
+        expires_at: {type: string, format: date-time}
+        created_at: {type: string, format: date-time}
+        inviter_username: {type: string}
+        token: {type: string, description: "Solo en la respuesta de creación"}
+
+    InvitationPreview:
+      type: object
+      properties:
+        org_id: {type: string, format: uuid}
+        org_name: {type: string}
+        org_slug: {type: string}
+        role: {$ref: "#/components/schemas/Role"}
+        inviter_username: {type: string}
+        expires_at: {type: string, format: date-time}
 
 security:
   - bearerAuth: []

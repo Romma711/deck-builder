@@ -333,6 +333,9 @@ func TestIntegration_DeckRepository_CRUD(t *testing.T) {
 	if deck.ID == "" {
 		t.Fatal("Create no asignó el ID")
 	}
+	if deck.OwnerName != user.Username {
+		t.Errorf("OwnerName tras Create = %q, esperaba %q", deck.OwnerName, user.Username)
+	}
 
 	// Roundtrip con el esquema normalizado (FKs + join con el catálogo).
 	found, err := repo.FindByID(ctx, deck.ID)

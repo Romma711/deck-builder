@@ -101,7 +101,7 @@ func (r *DeckRepository) Create(ctx context.Context, deck *domain.Deck) error {
 				return fmt.Errorf("crear cartas del mazo: %w", err)
 			}
 		}
-		return nil
+		return loadOwnerName(tx, model.ID, deck)
 	})
 	if err != nil {
 		return err
@@ -296,8 +296,20 @@ func (r *DeckRepository) Update(ctx context.Context, deck *domain.Deck) error {
 				return fmt.Errorf("guardar cartas del mazo: %w", err)
 			}
 		}
-		return nil
+		return loadOwnerName(tx, did, deck)
 	})
+}
+
+// loadOwnerName completa el username del dueño tras escribir el mazo, para
+// que las respuestas de crear/editar tengan la misma forma que las lecturas.
+func loadOwnerName(tx *gorm.DB, deckID uuid.UUID, deck *domain.Deck) error {
+	err := tx.Raw(
+		"SELECT users.username FROM decks JOIN users ON users.id = decks.owner_id WHERE decks.id = ?", deckID,
+	).Scan(&deck.OwnerName).Error
+	if err != nil {
+		return fmt.Errorf("leer dueño del mazo: %w", err)
+	}
+	return nil
 }
 
 func (r *DeckRepository) Delete(ctx context.Context, id string) error {

@@ -201,7 +201,7 @@ func TestRegister_PasswordCorta_ValidationError(t *testing.T) {
 	if !errors.As(err, &ve) {
 		t.Fatalf("esperaba *domain.ValidationError, obtuve %v", err)
 	}
-	if ve.Details["Password"] == "" {
+	if ve.Details["password"] == "" {
 		t.Errorf("falta el detalle del campo Password: %v", ve.Details)
 	}
 }

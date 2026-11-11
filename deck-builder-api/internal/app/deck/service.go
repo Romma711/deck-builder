@@ -140,15 +140,15 @@ func (s *Service) validate(ctx context.Context, ownerID string, in DeckInput) (*
 
 	details := map[string]string{}
 	if strings.TrimSpace(in.Name) == "" {
-		details["Name"] = "required"
+		details["name"] = "required"
 	} else if len(in.Name) < 3 || len(in.Name) > 50 {
-		details["Name"] = "min=3,max=50"
+		details["name"] = "min=3,max=50"
 	}
 	if len(in.Description) > 300 {
-		details["Description"] = "max=300"
+		details["description"] = "max=300"
 	}
 	if len(in.Cards) == 0 {
-		details["Cards"] = "required"
+		details["cards"] = "required"
 	}
 	if len(details) > 0 {
 		return nil, &domain.ValidationError{Details: details}
@@ -170,7 +170,7 @@ func (s *Service) validate(ctx context.Context, ownerID string, in DeckInput) (*
 	if err != nil {
 		if errors.Is(err, domain.ErrNotFound) {
 			return nil, &domain.ValidationError{
-				Details: map[string]string{"Game": "unsupported"}, Message: "juego no soportado: " + in.GameCode,
+				Details: map[string]string{"game": "unsupported"}, Message: "juego no soportado: " + in.GameCode,
 			}
 		}
 		return nil, err
@@ -180,7 +180,7 @@ func (s *Service) validate(ctx context.Context, ownerID string, in DeckInput) (*
 	format := game.FormatByCode(in.Format)
 	if format == nil {
 		return nil, &domain.ValidationError{
-			Details: map[string]string{"Format": "unsupported_for_game"},
+			Details: map[string]string{"format": "unsupported_for_game"},
 			Message: fmt.Sprintf("formato %q no existe en %s", in.Format, game.Code),
 		}
 	}
@@ -189,7 +189,7 @@ func (s *Service) validate(ctx context.Context, ownerID string, in DeckInput) (*
 	if !format.AllowsSize(in.DeckSize) {
 		return nil, &domain.ValidationError{
 			Details: map[string]string{
-				"DeckSize": fmt.Sprintf("format_range=[%d,%d]", format.MinSize, format.MaxSize),
+				"deck_size": fmt.Sprintf("format_range=[%d,%d]", format.MinSize, format.MaxSize),
 			},
 		}
 	}
@@ -197,7 +197,7 @@ func (s *Service) validate(ctx context.Context, ownerID string, in DeckInput) (*
 	// Líder obligatorio según el formato.
 	if format.RequiresLeader && in.Leader == nil {
 		return nil, &domain.ValidationError{
-			Details: map[string]string{"Leader": "required_for_" + format.Code},
+			Details: map[string]string{"leader": "required_for_" + format.Code},
 		}
 	}
 
@@ -236,7 +236,7 @@ func (s *Service) validate(ctx context.Context, ownerID string, in DeckInput) (*
 	// El tamaño declarado debe coincidir con las cartas enviadas.
 	if actual := countCards(spec, deck); actual != in.DeckSize {
 		return nil, &domain.ValidationError{
-			Details: map[string]string{"DeckSize": fmt.Sprintf("mismatch_cards=%d", actual)},
+			Details: map[string]string{"deck_size": fmt.Sprintf("mismatch_cards=%d", actual)},
 		}
 	}
 

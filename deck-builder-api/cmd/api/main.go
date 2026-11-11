@@ -104,7 +104,7 @@ func run() error {
 
 	// Organizaciones (Fase 5): roles owner > admin > member con lookup RBAC
 	// por request (siempre fresco; ver internal/app/org).
-	orgService := orgapp.NewService(orgRepo, membershipRepo, userRepo)
+	orgService := orgapp.NewService(orgRepo, membershipRepo, userRepo, postgres.NewInvitationRepository(db))
 
 	// 6. Motor HTTP: logging, panics, request IDs, CORS, rate limiting,
 	//    métricas Prometheus y healthchecks con ping a la base de datos.
@@ -119,7 +119,8 @@ func run() error {
 			AuthRPS:   cfg.RateLimit.AuthRPS,
 			AuthBurst: cfg.RateLimit.AuthBurst,
 		},
-		CORSOrigins: cfg.CORS.AllowedOrigins,
+		CORSOrigins:    cfg.CORS.AllowedOrigins,
+		TrustedProxies: cfg.TrustedProxies,
 	})
 
 	// 7. Registro de rutas (API v3).

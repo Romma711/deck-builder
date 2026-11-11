@@ -155,3 +155,39 @@ func rateOf(r *rateLimiter, class string) rate.Limit {
 	}
 	return rate.Limit(r.params.RPS)
 }
+
+// Detrás de un proxy de confianza, cada cliente real (X-Forwarded-For) tiene
+// su propio bucket; un cliente directo no puede falsificar el header.
+func TestRateLimit_ProxyDeConfianza(t *testing.T) {
+	gin.SetMode(gin.TestMode)
+	engine := NewEngine(EngineOptions{RateLimit: slowBurst(1), TrustedProxies: []string{"172.30.0.0/24"}})
+	engine.GET("/ping", func(c *gin.Context) { c.Status(http.StatusOK) })
+
+	viaProxy := func(clientIP string) int {
+		req := httptest.NewRequest(http.MethodGet, "/ping", nil)
+		req.RemoteAddr = "172.30.0.5:1234" // el reverse proxy
+		req.Header.Set("X-Forwarded-For", clientIP)
+		w := httptest.NewRecorder()
+		engine.ServeHTTP(w, req)
+		return w.Code
+	}
+	if viaProxy("203.0.113.1") != http.StatusOK || viaProxy("203.0.113.2") != http.StatusOK {
+		t.Fatal("dos clientes distintos detrás del proxy no deben compartir bucket")
+	}
+	if viaProxy("203.0.113.1") != http.StatusTooManyRequests {
+		t.Fatal("el mismo cliente debe agotar su propio bucket")
+	}
+
+	// Cliente directo (no es el proxy) que inventa X-Forwarded-For: se ignora.
+	spoof := func(fakeIP string) int {
+		req := httptest.NewRequest(http.MethodGet, "/ping", nil)
+		req.RemoteAddr = "198.51.100.7:1234"
+		req.Header.Set("X-Forwarded-For", fakeIP)
+		w := httptest.NewRecorder()
+		engine.ServeHTTP(w, req)
+		return w.Code
+	}
+	if spoof("1.1.1.1") != http.StatusOK || spoof("2.2.2.2") != http.StatusTooManyRequests {
+		t.Fatal("un cliente directo no debe evadir el rate limit falsificando X-Forwarded-For")
+	}
+}

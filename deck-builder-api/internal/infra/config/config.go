@@ -24,6 +24,9 @@ type Config struct {
 	Database  DatabaseConfig
 	RateLimit RateLimitConfig
 	CORS      CORSConfig
+	// TrustedProxies son los CIDRs/IPs del reverse proxy (TRUSTED_PROXIES).
+	// Vacío = no se confía en X-Forwarded-For (API expuesta directo).
+	TrustedProxies []string
 }
 
 // RateLimitConfig controla el limitador de peticiones por IP (token bucket,
@@ -85,6 +88,7 @@ func Load() (Config, error) {
 			AuthRPS:   getFloat("RATE_LIMIT_AUTH_RPS", 5),
 			AuthBurst: getInt("RATE_LIMIT_AUTH_BURST", 10),
 		},
+		TrustedProxies: splitList(os.Getenv("TRUSTED_PROXIES")),
 		CORS: CORSConfig{
 			AllowedOrigins: splitList(os.Getenv("CORS_ALLOWED_ORIGINS")),
 		},
