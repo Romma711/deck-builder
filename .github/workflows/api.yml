@@ -1,0 +1,45 @@
+name: API
+
+on:
+  push:
+    branches: [master]
+    paths: ['deck-builder-api/**', '.github/workflows/api.yml']
+  pull_request:
+    paths: ['deck-builder-api/**', '.github/workflows/api.yml']
+
+defaults:
+  run:
+    working-directory: deck-builder-api
+
+jobs:
+  test:
+    runs-on: ubuntu-latest
+    services:
+      # Superusuario: los tests de RLS crean un rol restringido propio.
+      postgres:
+        image: postgres:18-alpine
+        env:
+          POSTGRES_USER: test
+          POSTGRES_PASSWORD: test
+          POSTGRES_DB: deckbuilder_test
+        ports: ['5432:5432']
+        options: >-
+          --health-cmd "pg_isready -U test"
+          --health-interval 5s
+          --health-timeout 3s
+          --health-retries 10
+    env:
+      TEST_DATABASE_URL: postgres://test:test@localhost:5432/deckbuilder_test?sslmode=disable
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-go@v5
+        with:
+          go-version-file: deck-builder-api/go.mod
+          cache-dependency-path: deck-builder-api/go.sum
+      - name: Formato
+        run: test -z "$(gofmt -l .)" || (gofmt -l . && exit 1)
+      - run: go vet ./...
+      - name: Tests (incluye integración con Postgres)
+        run: go test -count=1 ./...
+      - name: La imagen de Docker compila
+        run: docker build -t deck-builder-api:ci .

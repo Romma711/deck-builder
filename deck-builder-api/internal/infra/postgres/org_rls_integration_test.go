@@ -10,8 +10,11 @@ package postgres
 import (
 	"context"
 	"errors"
+	"fmt"
 	"net/url"
 	"os"
+	"strings"
+	"sync"
 	"testing"
 	"time"
 
@@ -361,14 +364,18 @@ func TestIntegration_RLS_VisibilidadDeMazos(t *testing.T) {
 
 	// 6. Listados acotados por RLS:
 	//    anónimo → solo el público (1); bob → público + org privado (2).
-	anon, _, err := deckRepo.Find(context.Background(), ports.DeckFilter{})
+	//    El total (COUNT) también debe respetar RLS, no solo la página.
+	anon, anonTotal, err := deckRepo.Find(context.Background(), ports.DeckFilter{})
 	if err != nil {
 		t.Fatalf("Find anónimo: %v", err)
 	}
-	if len(anon) != 1 || anon[0].ID != alicePublic.ID {
-		t.Fatalf("Find anónimo = %d mazos, esperaba solo el público", len(anon))
+	if len(anon) != 1 || anon[0].ID != alicePublic.ID || anonTotal != 1 {
+		t.Fatalf("Find anónimo = %d mazos (total %d), esperaba solo el público", len(anon), anonTotal)
 	}
-	seenByBob, _, err := deckRepo.Find(ctxAs(bob.ID), ports.DeckFilter{})
+	seenByBob, bobTotal, err := deckRepo.Find(ctxAs(bob.ID), ports.DeckFilter{})
+	if bobTotal != 2 {
+		t.Errorf("total de bob = %d, esperaba 2", bobTotal)
+	}
 	if err != nil {
 		t.Fatalf("Find bob: %v", err)
 	}
@@ -490,5 +497,116 @@ func TestIntegration_RLS_EscrituraBloqueada(t *testing.T) {
 	}
 	if leaked != 0 {
 		t.Errorf("deck_cards expuso %d filas bajo identidad ajena", leaked)
+	}
+}
+
+// --- Listado: paginación, autor y username del dueño ---
+
+func TestIntegration_Find_PaginacionYAutor(t *testing.T) {
+	db := setupTestDB(t)
+	ensureRestrictedRole(t, db)
+
+	dana := integrationUser(t, db, "dana_pagina")
+	eve := integrationUser(t, db, "eve_otra")
+	for i := range 5 {
+		seedDeck(t, db, dana.ID, fmt.Sprintf("Dana %d", i), false, "")
+	}
+	seedDeck(t, db, eve.ID, "De Eve", false, "")
+
+	deckRepo := NewDeckRepository(openRestrictedDB(t))
+	ctx := context.Background()
+
+	// Páginas de 2 sin solapamiento; el total no depende de la página.
+	first, total, err := deckRepo.Find(ctx, ports.DeckFilter{Author: "DANA", Limit: 2})
+	if err != nil {
+		t.Fatalf("Find página 1: %v", err)
+	}
+	second, total2, err := deckRepo.Find(ctx, ports.DeckFilter{Author: "dana", Limit: 2, Offset: 2})
+	if err != nil {
+		t.Fatalf("Find página 2: %v", err)
+	}
+	if total != 5 || total2 != 5 {
+		t.Fatalf("totales = %d/%d, esperaba 5 (autor sin distinguir mayúsculas)", total, total2)
+	}
+	if len(first) != 2 || len(second) != 2 || first[0].ID == second[0].ID || first[1].ID == second[1].ID {
+		t.Fatalf("páginas solapadas o incompletas: %d y %d mazos", len(first), len(second))
+	}
+	if first[0].OwnerName != "dana_pagina" {
+		t.Errorf("OwnerName = %q, esperaba dana_pagina", first[0].OwnerName)
+	}
+
+	// El patrón del autor es literal: "_" no es comodín.
+	if _, n, _ := deckRepo.Find(ctx, ports.DeckFilter{Author: "dana_"}); n != 5 {
+		t.Errorf("autor con guion bajo literal = %d, esperaba 5", n)
+	}
+	if _, n, _ := deckRepo.Find(ctx, ports.DeckFilter{Author: "d_na"}); n != 0 {
+		t.Errorf("'_' se trató como comodín: %d resultados", n)
+	}
+}
+
+// --- Invitaciones: aceptación atómica y de un solo uso ---
+
+func TestIntegration_InvitationRepository_Accept(t *testing.T) {
+	db := setupTestDB(t)
+	ctx := context.Background()
+	owner := integrationUser(t, db, "inv_owner")
+	org := integrationOrg(t, db, owner, "inv-org", "Inv Org")
+	repo := NewInvitationRepository(db)
+	now := time.Now().UTC()
+
+	newInvitation := func(hash string) *domain.Invitation {
+		inv := &domain.Invitation{
+			OrgID: org.ID, Role: domain.RoleMember, CreatedBy: owner.ID,
+			ExpiresAt: now.Add(time.Hour), CreatedAt: now,
+		}
+		if err := repo.Create(ctx, inv, hash); err != nil {
+			t.Fatalf("Create: %v", err)
+		}
+		return inv
+	}
+
+	// Ya miembro: conflicto y el link sigue activo.
+	newInvitation(strings.Repeat("a", 64))
+	if _, err := repo.Accept(ctx, strings.Repeat("a", 64), owner.ID, now); !errors.Is(err, domain.ErrConflict) {
+		t.Fatalf("aceptar siendo miembro: err = %v, esperaba ErrConflict", err)
+	}
+	preview, err := repo.FindActiveByTokenHash(ctx, strings.Repeat("a", 64), now)
+	if err != nil {
+		t.Fatalf("el link debía seguir activo: %v", err)
+	}
+	if preview.OrgName != "Inv Org" || preview.InviterName != "inv_owner" {
+		t.Errorf("preview = %+v, esperaba nombre de org e invitante", preview)
+	}
+
+	// Dos personas aceptan el mismo link a la vez: solo una entra.
+	newInvitation(strings.Repeat("b", 64))
+	users := []*domain.User{integrationUser(t, db, "inv_x"), integrationUser(t, db, "inv_y")}
+	var wg sync.WaitGroup
+	errs := make([]error, len(users))
+	for i, u := range users {
+		wg.Add(1)
+		go func() {
+			defer wg.Done()
+			_, errs[i] = repo.Accept(ctx, strings.Repeat("b", 64), u.ID, now)
+		}()
+	}
+	wg.Wait()
+	ok := 0
+	for _, err := range errs {
+		if err == nil {
+			ok++
+		} else if !errors.Is(err, domain.ErrNotFound) {
+			t.Errorf("error inesperado: %v", err)
+		}
+	}
+	if ok != 1 {
+		t.Fatalf("aceptaciones exitosas = %d, esperaba exactamente 1", ok)
+	}
+
+	// Vencida: no se puede ver ni aceptar.
+	newInvitation(strings.Repeat("c", 64))
+	later := now.Add(2 * time.Hour)
+	if _, err := repo.Accept(ctx, strings.Repeat("c", 64), users[0].ID, later); !errors.Is(err, domain.ErrNotFound) {
+		t.Errorf("aceptar vencida: err = %v, esperaba ErrNotFound", err)
 	}
 }

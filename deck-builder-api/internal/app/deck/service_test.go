@@ -380,7 +380,7 @@ func TestCreate_JuegoNoSoportado_ValidationError(t *testing.T) {
 	if !errors.As(err, &ve) {
 		t.Fatalf("esperaba *domain.ValidationError, obtuve %v", err)
 	}
-	if ve.Details["Game"] != "unsupported" {
+	if ve.Details["game"] != "unsupported" {
 		t.Errorf("detalles = %v, esperaba Game: unsupported", ve.Details)
 	}
 }
@@ -396,7 +396,7 @@ func TestCreate_LiderSinLider_ValidationError(t *testing.T) {
 	if !errors.As(err, &ve) {
 		t.Fatalf("esperaba *domain.ValidationError, obtuve %v", err)
 	}
-	if ve.Details["Leader"] == "" {
+	if ve.Details["leader"] == "" {
 		t.Errorf("falta el detalle de Leader: %v", ve.Details)
 	}
 }
@@ -413,7 +413,7 @@ func TestCreate_FormatoInvalidoParaElJuego(t *testing.T) {
 	if !errors.As(err, &ve) {
 		t.Fatalf("esperaba *domain.ValidationError, obtuve %v", err)
 	}
-	if ve.Details["Format"] == "" {
+	if ve.Details["format"] == "" {
 		t.Errorf("detalles = %v, esperaba detalle de Format", ve.Details)
 	}
 }
@@ -435,7 +435,7 @@ func TestCreate_TamanoFueraDeRango_ValidationError(t *testing.T) {
 	if !errors.As(err, &ve) {
 		t.Fatalf("esperaba *domain.ValidationError, obtuve %v", err)
 	}
-	if ve.Details["DeckSize"] == "" {
+	if ve.Details["deck_size"] == "" {
 		t.Errorf("detalles = %v, esperaba detalle de DeckSize", ve.Details)
 	}
 }
@@ -750,7 +750,7 @@ func TestCreate_DeckSizeDebeCoincidirConLasCartas(t *testing.T) {
 	if !errors.As(err, &ve) {
 		t.Fatalf("esperaba *domain.ValidationError, obtuve %v", err)
 	}
-	if ve.Details["DeckSize"] != "mismatch_cards=99" {
+	if ve.Details["deck_size"] != "mismatch_cards=99" {
 		t.Errorf("detalles = %v, esperaba mismatch_cards=99", ve.Details)
 	}
 }

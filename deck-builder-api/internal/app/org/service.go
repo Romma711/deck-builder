@@ -13,6 +13,10 @@ package org
 
 import (
 	"context"
+	"crypto/rand"
+	"crypto/sha256"
+	"encoding/base64"
+	"encoding/hex"
 	"errors"
 	"fmt"
 	"regexp"
@@ -32,6 +36,7 @@ type Service struct {
 	orgs    ports.OrganizationRepository
 	members ports.MembershipRepository
 	users   ports.UserRepository
+	invites ports.InvitationRepository
 	now     func() time.Time // inyectable para tests
 }
 
@@ -39,11 +44,13 @@ func NewService(
 	orgs ports.OrganizationRepository,
 	members ports.MembershipRepository,
 	users ports.UserRepository,
+	invites ports.InvitationRepository,
 ) *Service {
 	return &Service{
 		orgs:    orgs,
 		members: members,
 		users:   users,
+		invites: invites,
 		now:     func() time.Time { return time.Now().UTC() },
 	}
 }
@@ -71,14 +78,14 @@ func (s *Service) Create(ctx context.Context, userID string, in CreateInput) (*d
 	details := map[string]string{}
 	name := strings.TrimSpace(in.Name)
 	if len(name) < 2 || len(name) > 100 {
-		details["Name"] = "min=2,max=100"
+		details["name"] = "min=2,max=100"
 	}
 	slug := strings.ToLower(strings.TrimSpace(in.Slug))
 	if slug == "" {
 		slug = slugify(name)
 	}
 	if !slugPattern.MatchString(slug) || len(slug) > 50 {
-		details["Slug"] = "lowercase_slug_1_50"
+		details["slug"] = "lowercase_slug_1_50"
 	}
 	if len(details) > 0 {
 		return nil, &domain.ValidationError{Details: details}
@@ -124,11 +131,11 @@ func (s *Service) Update(ctx context.Context, orgID, actorID string, in UpdateIn
 	details := map[string]string{}
 	name := strings.TrimSpace(in.Name)
 	if len(name) < 2 || len(name) > 100 {
-		details["Name"] = "min=2,max=100"
+		details["name"] = "min=2,max=100"
 	}
 	slug := strings.ToLower(strings.TrimSpace(in.Slug))
 	if !slugPattern.MatchString(slug) || len(slug) > 50 {
-		details["Slug"] = "lowercase_slug_1_50"
+		details["slug"] = "lowercase_slug_1_50"
 	}
 	if len(details) > 0 {
 		return nil, &domain.ValidationError{Details: details}
@@ -166,7 +173,7 @@ func (s *Service) AddMember(ctx context.Context, orgID, actorID, username string
 		role = domain.RoleMember
 	}
 	if !domain.ValidRole(role) {
-		return nil, &domain.ValidationError{Details: map[string]string{"Role": "oneof=admin,member,owner"}}
+		return nil, &domain.ValidationError{Details: map[string]string{"role": "oneof=admin,member,owner"}}
 	}
 	if actor.Role != domain.RoleOwner && role != domain.RoleMember {
 		return nil, fmt.Errorf("%w: solo un owner puede otorgar roles admin/owner", domain.ErrForbidden)
@@ -176,7 +183,7 @@ func (s *Service) AddMember(ctx context.Context, orgID, actorID, username string
 	if err != nil {
 		if errors.Is(err, domain.ErrNotFound) {
 			return nil, &domain.ValidationError{
-				Details: map[string]string{"User": "unknown"}, Message: "usuario no encontrado: " + username,
+				Details: map[string]string{"user": "unknown"}, Message: "usuario no encontrado: " + username,
 			}
 		}
 		return nil, err
@@ -199,7 +206,7 @@ func (s *Service) ChangeRole(ctx context.Context, orgID, actorID, targetUserID s
 		return err
 	}
 	if !domain.ValidRole(newRole) {
-		return &domain.ValidationError{Details: map[string]string{"Role": "oneof=admin,member,owner"}}
+		return &domain.ValidationError{Details: map[string]string{"role": "oneof=admin,member,owner"}}
 	}
 
 	target, err := s.members.FindByOrgAndUser(ctx, orgID, targetUserID)
@@ -261,11 +268,108 @@ func (s *Service) RemoveMember(ctx context.Context, orgID, actorID, targetUserID
 }
 
 // ListMembers lista los miembros (debe ser miembro).
+//
+// Privacidad: los emails ajenos solo los ven admin y owner (los necesitan
+// para gestionar la org). Un member ve el suyo y el username del resto.
 func (s *Service) ListMembers(ctx context.Context, orgID, actorID string) ([]ports.MemberInfo, error) {
-	if _, _, err := s.requireRole(ctx, orgID, actorID, domain.RoleMember); err != nil {
+	_, actor, err := s.requireRole(ctx, orgID, actorID, domain.RoleMember)
+	if err != nil {
 		return nil, err
 	}
-	return s.members.ListMembersByOrg(ctx, orgID)
+	members, err := s.members.ListMembersByOrg(ctx, orgID)
+	if err != nil {
+		return nil, err
+	}
+	if !actor.Role.AtLeast(domain.RoleAdmin) {
+		for i := range members {
+			if members[i].UserID != actorID {
+				members[i].Email = ""
+			}
+		}
+	}
+	return members, nil
+}
+
+// --- Invitaciones por link ---
+
+// CreateInvitation crea un link de invitación (rol mínimo: admin). Mismas
+// reglas que AddMember: solo un owner puede invitar como admin u owner.
+// Devuelve el token en claro: es la ÚNICA vez que existe (se guarda su hash).
+func (s *Service) CreateInvitation(ctx context.Context, orgID, actorID string, role domain.Role) (*domain.Invitation, string, error) {
+	_, actor, err := s.requireRole(ctx, orgID, actorID, domain.RoleAdmin)
+	if err != nil {
+		return nil, "", err
+	}
+	if role == "" {
+		role = domain.RoleMember
+	}
+	if !domain.ValidRole(role) {
+		return nil, "", &domain.ValidationError{Details: map[string]string{"role": "oneof=admin,member,owner"}}
+	}
+	if actor.Role != domain.RoleOwner && role != domain.RoleMember {
+		return nil, "", fmt.Errorf("%w: solo un owner puede invitar como admin/owner", domain.ErrForbidden)
+	}
+
+	buf := make([]byte, 32)
+	if _, err := rand.Read(buf); err != nil {
+		return nil, "", fmt.Errorf("%w: generar token de invitación: %v", domain.ErrInternal, err)
+	}
+	token := base64.RawURLEncoding.EncodeToString(buf)
+
+	now := s.now()
+	inv := &domain.Invitation{
+		OrgID: orgID, Role: role, CreatedBy: actorID,
+		ExpiresAt: now.Add(domain.InvitationTTL), CreatedAt: now,
+	}
+	if err := s.invites.Create(ctx, inv, hashInvitationToken(token)); err != nil {
+		return nil, "", err
+	}
+	return inv, token, nil
+}
+
+// ListInvitations lista las invitaciones activas (rol mínimo: admin).
+func (s *Service) ListInvitations(ctx context.Context, orgID, actorID string) ([]domain.Invitation, error) {
+	if _, _, err := s.requireRole(ctx, orgID, actorID, domain.RoleAdmin); err != nil {
+		return nil, err
+	}
+	return s.invites.ListActiveByOrg(ctx, orgID, s.now())
+}
+
+// RevokeInvitation revoca una invitación activa (rol mínimo: admin).
+func (s *Service) RevokeInvitation(ctx context.Context, orgID, actorID, invitationID string) error {
+	if _, _, err := s.requireRole(ctx, orgID, actorID, domain.RoleAdmin); err != nil {
+		return err
+	}
+	return s.invites.Revoke(ctx, orgID, invitationID, s.now())
+}
+
+// PreviewInvitation muestra a quién y a qué invita un link activo. No exige
+// sesión: el token ya es el secreto. Usado, vencido o revocado → ErrNotFound.
+func (s *Service) PreviewInvitation(ctx context.Context, token string) (*domain.Invitation, error) {
+	return s.invites.FindActiveByTokenHash(ctx, hashInvitationToken(token), s.now())
+}
+
+// AcceptInvitation suma al usuario a la org con el rol de la invitación y
+// la consume. Ya miembro → ErrConflict (la invitación queda disponible).
+func (s *Service) AcceptInvitation(ctx context.Context, token, userID string) (*domain.Organization, error) {
+	if userID == "" {
+		return nil, domain.ErrUnauthorized
+	}
+	inv, err := s.invites.Accept(ctx, hashInvitationToken(token), userID, s.now())
+	if err != nil {
+		return nil, err
+	}
+	org, err := s.orgs.FindByID(ctx, inv.OrgID)
+	if err != nil {
+		return nil, err
+	}
+	org.Role = inv.Role
+	return org, nil
+}
+
+func hashInvitationToken(token string) string {
+	sum := sha256.Sum256([]byte(token))
+	return hex.EncodeToString(sum[:])
 }
 
 // --- internos ---

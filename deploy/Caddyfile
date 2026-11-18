@@ -1,0 +1,28 @@
+# Caddy obtiene y renueva solo el certificado HTTPS de {$DOMAIN}
+# (Let's Encrypt en un dominio real; CA local para *.localhost).
+{$DOMAIN} {
+	encode zstd gzip
+
+	# Solo /api/* llega a la API: /metrics y /readyz quedan internos.
+	handle /api/* {
+		reverse_proxy api:8080
+	}
+
+	handle {
+		reverse_proxy web:4321
+	}
+
+	header {
+		Strict-Transport-Security "max-age=31536000"
+		X-Content-Type-Options "nosniff"
+		X-Frame-Options "DENY"
+		# `?` = solo si la app no definió uno (la página de invitación usa no-referrer).
+		?Referrer-Policy "strict-origin-when-cross-origin"
+		-Server
+	}
+
+	log {
+		output stdout
+		format json
+	}
+}

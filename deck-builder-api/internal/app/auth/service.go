@@ -241,13 +241,13 @@ func (s *Service) newRefreshToken(userID string) (string, *domain.RefreshToken, 
 func validateRegistration(in RegisterInput) error {
 	details := map[string]string{}
 	if strings.TrimSpace(in.Username) == "" {
-		details["Username"] = "required"
+		details["username"] = "required"
 	}
 	if !strings.Contains(in.Email, "@") {
-		details["Email"] = "email"
+		details["email"] = "email"
 	}
 	if len(in.Password) < MinPasswordLength {
-		details["Password"] = fmt.Sprintf("min=%d", MinPasswordLength)
+		details["password"] = fmt.Sprintf("min=%d", MinPasswordLength)
 	}
 	if len(details) > 0 {
 		return &domain.ValidationError{Details: details}

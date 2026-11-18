@@ -94,6 +94,22 @@ type MembershipModel struct {
 
 func (MembershipModel) TableName() string { return "memberships" }
 
+// InvitationModel mapea la tabla org_invitations.
+type InvitationModel struct {
+	ID        uuid.UUID  `gorm:"type:uuid;primaryKey"`
+	OrgID     uuid.UUID  `gorm:"type:uuid;column:org_id;not null"`
+	TokenHash string     `gorm:"type:char(64);uniqueIndex;not null"`
+	Role      string     `gorm:"type:varchar(10);not null"`
+	CreatedBy *uuid.UUID `gorm:"type:uuid"`
+	ExpiresAt time.Time  `gorm:"not null"`
+	UsedAt    *time.Time
+	UsedBy    *uuid.UUID `gorm:"type:uuid"`
+	RevokedAt *time.Time
+	CreatedAt time.Time
+}
+
+func (InvitationModel) TableName() string { return "org_invitations" }
+
 // DeckModel mapea la tabla decks con referencias al catálogo de cartas y al
 // tenancy de la Fase 5 (org_id + is_private; RLS lo aplica en la BD).
 type DeckModel struct {

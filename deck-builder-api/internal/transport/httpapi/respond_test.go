@@ -79,13 +79,13 @@ func TestRespondError_FormaEstándar(t *testing.T) {
 }
 
 func TestValidationError_AportaDetails(t *testing.T) {
-	err := &domain.ValidationError{Details: map[string]string{"Name": "requerido"}}
+	err := &domain.ValidationError{Details: map[string]string{"name": "requerido"}}
 	status, body := mapError(err)
 
 	if status != http.StatusBadRequest {
 		t.Errorf("status = %d, esperaba 400", status)
 	}
-	if body.Details["Name"] != "requerido" {
+	if body.Details["name"] != "requerido" {
 		t.Errorf("details = %v, esperaba Name: requerido", body.Details)
 	}
 }

@@ -27,6 +27,9 @@ type EngineOptions struct {
 	RateLimit RateLimitParams
 	// CORSOrigins son los orígenes permitidos para el navegador (vacío = none).
 	CORSOrigins []string
+	// TrustedProxies son los CIDRs/IPs del reverse proxy. Solo desde ellos
+	// se acepta X-Forwarded-For para obtener la IP real del cliente.
+	TrustedProxies []string
 }
 
 // NewEngine crea el motor HTTP con logging estructurado, manejo de panics,
@@ -39,10 +42,14 @@ func NewEngine(opts EngineOptions) *gin.Engine {
 	}
 
 	engine := gin.New()
-	// Sin proxies de confianza: ClientIP() usa RemoteAddr directo y nadie
-	// puede spoofear X-Forwarded-For para evadir el rate limiting. Detrás de
-	// un proxy real, configurar los CIDRs de confianza explícitamente.
-	_ = engine.SetTrustedProxies(nil)
+	// Sin proxies de confianza (default): ClientIP() usa RemoteAddr directo
+	// y nadie puede spoofear X-Forwarded-For para evadir el rate limiting.
+	// Detrás de un proxy (Caddy, Nginx) hay que declararlo: si no, todas las
+	// peticiones comparten la IP del proxy y el rate limit es global.
+	if err := engine.SetTrustedProxies(opts.TrustedProxies); err != nil {
+		opts.Logger.Error("TRUSTED_PROXIES inválido: no se confía en ningún proxy", "error", err)
+		_ = engine.SetTrustedProxies(nil)
+	}
 
 	metrics := NewMetrics()
 	engine.Use(
